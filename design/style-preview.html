@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WeTrace · 首页视觉方向</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --serif:"Songti SC","Source Han Serif SC","Noto Serif SC",Georgia,"Times New Roman",serif;
+    --sans:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+    --mono:"SF Mono",Menlo,Consolas,monospace;
+  }
+  body{background:#0d0d0f;color:#e9e9ec;font-family:var(--sans);-webkit-font-smoothing:antialiased}
+  .chrome{position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:20px;
+    padding:14px 28px;background:rgba(13,13,15,.92);backdrop-filter:blur(10px);
+    border-bottom:1px solid #232328}
+  .chrome .mark{font-family:var(--serif);font-size:18px;letter-spacing:.06em}
+  .chrome .mark span{color:#8b8b93;font-size:12px;letter-spacing:.18em;margin-left:10px;text-transform:uppercase}
+  .tabs{display:flex;gap:4px;margin-left:auto}
+  .tabs button{border:1px solid transparent;background:transparent;color:#9a9aa3;
+    font:500 13px/1 var(--sans);padding:9px 14px;border-radius:999px;cursor:pointer;transition:.15s}
+  .tabs button:hover{color:#e9e9ec;background:#1a1a1f}
+  .tabs button[aria-selected="true"]{color:#0d0d0f;background:#e9e9ec}
+  .hint{padding:12px 28px;color:#77777f;font-size:12px;letter-spacing:.02em}
+
+  .stage{padding:0 28px 64px}
+  .scalebox{position:relative;width:100%;max-width:1280px;margin:0 auto}
+  .frame{position:absolute;top:0;left:0;width:1280px;height:800px;display:none;
+    transform-origin:top left;overflow:hidden;background:#fff}
+  .frame.active{display:flex}
+
+  /* ============ 公共：侧栏骨架 ============ */
+  .side{width:286px;flex:0 0 286px;height:100%;display:flex;flex-direction:column;position:relative}
+  .brand{display:flex;align-items:baseline;gap:10px}
+  .brand b{font-weight:600}
+  .brand i{font-style:normal;font-size:10px;letter-spacing:.22em;text-transform:uppercase}
+  .rel-list{flex:1;overflow:hidden}
+  .rel{display:flex;align-items:center;gap:12px;position:relative}
+  .avatar{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;
+    font-size:13px;flex:0 0 34px}
+  .rel .who{flex:1;min-width:0}
+  .rel .name{font-size:13.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .rel .sub{font-size:11.5px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .new-rel{display:flex;align-items:center;gap:8px;font-size:12.5px}
+
+  /* ============================================================
+     A · 纸质编年
+     ============================================================ */
+  .theme-paper{background:#f4efe4;color:#241f18;font-family:var(--sans)}
+  .theme-paper .side{background:#efe8da;border-right:1px solid rgba(36,31,24,.16);padding:26px 22px 24px}
+  .theme-paper .brand b{font-family:var(--serif);font-size:22px;letter-spacing:.02em;color:#241f18}
+  .theme-paper .brand i{color:#8a7f6d}
+  .theme-paper .side-rule{height:1px;background:rgba(36,31,24,.18);margin:18px 0 14px}
+  .theme-paper .rel{padding:11px 8px 11px 10px;border-bottom:1px solid rgba(36,31,24,.12)}
+  .theme-paper .rel.active{background:#e7dfcf}
+  .theme-paper .rel.active::before{content:"";position:absolute;left:0;top:9px;bottom:9px;width:2px;background:#9c3d2e}
+  .theme-paper .avatar{background:#ded4c1;color:#5c5040;border-radius:50%}
+  .theme-paper .rel .name{color:#241f18}
+  .theme-paper .rel .sub{color:#8a7f6d}
+  .theme-paper .new-rel{margin-top:14px;color:#9c3d2e;padding-left:10px}
+  .theme-paper .main{flex:1;padding:40px 52px 0;position:relative;overflow:hidden}
+  .theme-paper .doc-kicker{font-size:10px;letter-spacing:.26em;text-transform:uppercase;color:#9c3d2e}
+  .theme-paper h1{font-family:var(--serif);font-size:40px;font-weight:500;letter-spacing:.01em;margin-top:10px}
+  .theme-paper h1 em{font-style:normal;color:#9c3d2e;font-size:26px;margin:0 6px}
+  .theme-paper .doc-meta{font-size:12px;color:#8a7f6d;margin-top:8px;letter-spacing:.02em}
+  .theme-paper .doc-tools{position:absolute;top:42px;right:52px;display:flex;gap:8px}
+  .theme-paper .doc-tools span{font-size:11.5px;padding:7px 14px;border:1px solid rgba(36,31,24,.28);
+    border-radius:2px;color:#5c5040}
+  .theme-paper .ledger-stats{display:flex;gap:0;margin:26px 0 30px;border-top:1px solid rgba(36,31,24,.2);
+    border-bottom:1px solid rgba(36,31,24,.2)}
+  .theme-paper .ls{flex:1;padding:13px 18px 12px 0;border-right:1px solid rgba(36,31,24,.12)}
+  .theme-paper .ls:last-child{border-right:none;padding-left:18px}
+  .theme-paper .ls .k{font-size:10.5px;letter-spacing:.14em;color:#8a7f6d}
+  .theme-paper .ls .v{font-family:var(--serif);font-size:22px;margin-top:3px}
+  .theme-paper .ls .v small{font-family:var(--sans);font-size:11px;color:#8a7f6d;margin-left:6px}
+  .theme-paper .ledger{position:relative;padding-left:96px}
+  .theme-paper .year-tag{position:absolute;left:0;font-family:var(--serif);font-size:17px;color:#a2957f;
+    letter-spacing:.04em}
+  .theme-paper .entry{position:relative;padding:0 0 25px 28px;border-left:1px solid rgba(36,31,24,.22)}
+  .theme-paper .entry::before{content:"";position:absolute;left:-4px;top:5px;width:7px;height:7px;
+    border-radius:50%;background:#f4efe4;border:1px solid #9c3d2e}
+  .theme-paper .season{font-size:10.5px;letter-spacing:.16em;color:#9c3d2e}
+  .theme-paper .entry h3{font-family:var(--serif);font-size:20px;font-weight:500;margin:5px 0 6px}
+  .theme-paper .entry p{font-size:12.5px;line-height:1.75;color:#5c5040;max-width:560px}
+  .theme-paper .ev{display:inline-flex;align-items:center;gap:7px;margin-top:8px;font-size:11px;color:#8a7f6d}
+  .theme-paper .ev b{font-weight:500;color:#9c3d2e}
+  .theme-paper .ev .dot{width:3px;height:3px;border-radius:50%;background:#b9ad99}
+  .theme-paper .gap{font-size:11.5px;color:#a2957f;font-style:italic;margin-top:2px}
+  .theme-paper .foot{position:absolute;bottom:20px;left:52px;right:52px;display:flex;
+    justify-content:space-between;font-size:10.5px;color:#a2957f;letter-spacing:.1em}
+
+  /* ============================================================
+     B · 胶片放映
+     ============================================================ */
+  .theme-film{background:#14110e;color:#ece3d6;font-family:var(--sans)}
+  .theme-film .side{background:#181410;border-right:1px solid rgba(236,227,214,.1);padding:26px 22px 24px}
+  .theme-film .brand b{font-family:var(--serif);font-size:22px;font-weight:500;letter-spacing:.03em;color:#f0e7d9}
+  .theme-film .brand i{color:#8b7f6e}
+  .theme-film .side-rule{height:1px;background:rgba(236,227,214,.12);margin:18px 0 14px}
+  .theme-film .rel{padding:10px 8px;border-radius:6px}
+  .theme-film .rel.active{background:#241d15}
+  .theme-film .rel.active::before{content:"";position:absolute;left:-22px;top:12px;bottom:12px;width:2px;background:#d8a15c}
+  .theme-film .avatar{background:#2c241b;color:#d8a15c}
+  .theme-film .rel .name{color:#ece3d6}
+  .theme-film .rel .sub{color:#8b7f6e}
+  .theme-film .new-rel{margin-top:14px;color:#d8a15c;padding-left:8px}
+  .theme-film .main{flex:1;padding:36px 44px 0;position:relative;overflow:hidden}
+  .theme-film .film-kicker{font-size:10px;letter-spacing:.3em;color:#8b7f6e;text-transform:uppercase}
+  .theme-film h1{font-family:var(--serif);font-size:38px;font-weight:500;color:#f4ecdf;margin-top:8px}
+  .theme-film h1 span{color:#d8a15c}
+  .theme-film .film-meta{font-size:12px;color:#8b7f6e;margin-top:7px;letter-spacing:.04em}
+  .theme-film .big-year{position:absolute;top:24px;right:40px;font-family:var(--serif);
+    font-size:88px;line-height:1;color:rgba(216,161,92,.16);letter-spacing:.02em}
+  .theme-film .strip{margin-top:26px;position:relative;background:#0d0b09;
+    border-top:1px solid #2a231b;border-bottom:1px solid #2a231b;padding:18px 0}
+  .theme-film .sprocket{position:absolute;left:0;right:0;height:10px;
+    background:repeating-linear-gradient(90deg,#0d0b09 0 10px,#2a231b 10px 16px,#0d0b09 16px 26px)}
+  .theme-film .sprocket.top{top:4px}
+  .theme-film .sprocket.bottom{bottom:4px}
+  .theme-film .frames{display:flex;gap:10px;padding:14px 18px;overflow:hidden}
+  .theme-film .fr{flex:1;min-width:0;background:#1c1712;border:1px solid #302820;padding:14px 14px 12px;
+    position:relative;height:168px}
+  .theme-film .fr.sel{border-color:#d8a15c;background:#211a13}
+  .theme-film .fr .no{font-family:var(--mono);font-size:10px;color:#7c7060;letter-spacing:.12em}
+  .theme-film .fr .date{font-family:var(--serif);font-size:19px;color:#e8dece;margin-top:8px}
+  .theme-film .fr .ttl{font-size:12px;color:#c9bda9;margin-top:3px;line-height:1.5}
+  .theme-film .fr .mini{margin-top:12px;height:34px;display:flex;align-items:flex-end;gap:3px}
+  .theme-film .fr .mini i{display:block;width:6px;background:#4a3d2c}
+  .theme-film .fr.sel .mini i{background:#d8a15c}
+  .theme-film .chapter{margin-top:22px;display:flex;gap:28px;align-items:flex-start}
+  .theme-film .chapter .l{flex:1}
+  .theme-film .chapter .tag{display:inline-block;font-size:10px;letter-spacing:.18em;color:#d8a15c;
+    border:1px solid #463722;padding:4px 9px;border-radius:2px}
+  .theme-film .chapter h2{font-family:var(--serif);font-size:24px;font-weight:500;color:#f4ecdf;margin-top:12px}
+  .theme-film .chapter p{font-size:12.5px;line-height:1.8;color:#a89984;margin-top:8px;max-width:520px}
+  .theme-film .quote{width:330px;flex:0 0 330px;border-left:1px solid #3a2e21;padding-left:22px}
+  .theme-film .quote .q{font-family:var(--serif);font-size:16px;line-height:1.75;color:#dfd2bf}
+  .theme-film .quote .src{font-size:11px;color:#7c7060;margin-top:10px}
+  .theme-film .film-stats{display:flex;gap:40px;margin-top:24px;padding-top:16px;border-top:1px solid #2a231b}
+  .theme-film .fs .k{font-size:10.5px;letter-spacing:.14em;color:#7c7060}
+  .theme-film .fs .v{font-family:var(--serif);font-size:26px;color:#f0e7d9;margin-top:2px}
+  .theme-film .fs .v small{font-family:var(--sans);font-size:11px;color:#8b7f6e;margin-left:5px}
+
+  /* ============================================================
+     C · 编辑部
+     ============================================================ */
+  .theme-edit{background:#fff;color:#111}
+  .theme-edit .side{width:250px;flex:0 0 250px;border-right:1px solid #111;padding:26px 22px 24px}
+  .theme-edit .brand b{font-family:var(--serif);font-size:24px;letter-spacing:-.01em}
+  .theme-edit .brand i{color:#8a8a8a}
+  .theme-edit .masthead-rule{height:3px;background:#111;margin:16px 0 6px}
+  .theme-edit .issue{font-size:9.5px;letter-spacing:.2em;color:#8a8a8a;text-transform:uppercase}
+  .theme-edit .rel{padding:13px 0;border-bottom:1px solid #e3e3e3;gap:10px}
+  .theme-edit .rel .idx{font-family:var(--mono);font-size:10px;color:#b3b3b3;width:18px}
+  .theme-edit .rel .avatar{display:none}
+  .theme-edit .rel.active .name{color:#c33a2b}
+  .theme-edit .rel.active::after{content:"●";position:absolute;right:0;top:17px;font-size:7px;color:#c33a2b}
+  .theme-edit .rel .name{font-size:13.5px;font-weight:600}
+  .theme-edit .rel .sub{font-size:11px;color:#8a8a8a}
+  .theme-edit .new-rel{margin-top:16px;font-size:11px;letter-spacing:.14em;color:#c33a2b}
+  .theme-edit .main{flex:1;padding:26px 44px 0;position:relative;overflow:hidden}
+  .theme-edit .topline{display:flex;justify-content:space-between;align-items:center;
+    border-bottom:1px solid #111;padding-bottom:8px}
+  .theme-edit .topline .l{font-size:9.5px;letter-spacing:.28em;text-transform:uppercase;color:#8a8a8a}
+  .theme-edit .topline .r{font-family:var(--mono);font-size:10px;color:#8a8a8a}
+  .theme-edit h1{font-family:var(--serif);font-size:62px;line-height:1.02;font-weight:500;
+    letter-spacing:-.02em;margin-top:20px;max-width:620px}
+  .theme-edit h1 em{font-style:italic;color:#c33a2b}
+  .theme-edit .deck{display:flex;gap:36px;margin-top:18px;align-items:flex-start}
+  .theme-edit .deck .body{flex:1;column-count:2;column-gap:28px;font-size:12.5px;line-height:1.85;color:#333}
+  .theme-edit .deck .body p{margin-bottom:10px;text-align:justify}
+  .theme-edit .pull{width:250px;flex:0 0 250px;border-top:3px solid #c33a2b;padding-top:10px}
+  .theme-edit .pull q{font-family:var(--serif);font-size:17px;line-height:1.7;display:block}
+  .theme-edit .pull .src{font-size:10.5px;color:#8a8a8a;margin-top:8px;letter-spacing:.06em}
+  .theme-edit .covers{display:flex;gap:12px;margin-top:22px}
+  .theme-edit .cover{flex:1;height:150px;padding:16px;position:relative;display:flex;flex-direction:column;justify-content:space-between}
+  .theme-edit .cover.a{background:#d9a441;color:#241a06}
+  .theme-edit .cover.b{background:#111;color:#f1ece4}
+  .theme-edit .cover.c{background:#c33a2b;color:#fff1ec}
+  .theme-edit .cover .yr{font-family:var(--mono);font-size:10px;letter-spacing:.16em;opacity:.75}
+  .theme-edit .cover .tt{font-family:var(--serif);font-size:21px;line-height:1.25}
+  .theme-edit .cover .sub{font-size:10.5px;opacity:.75;letter-spacing:.06em}
+  .theme-edit .stats{display:flex;margin-top:20px;border-top:1px solid #111;border-bottom:1px solid #111}
+  .theme-edit .st{flex:1;padding:11px 0;border-right:1px solid #dcdcdc}
+  .theme-edit .st:last-child{border-right:none}
+  .theme-edit .st .k{font-size:9.5px;letter-spacing:.18em;color:#8a8a8a;text-transform:uppercase}
+  .theme-edit .st .v{font-family:var(--serif);font-size:25px;margin-top:3px}
+  .theme-edit .pageno{position:absolute;right:44px;bottom:18px;font-family:var(--mono);font-size:10px;color:#b3b3b3}
+
+  @media (prefers-reduced-motion:no-preference){
+    .frame.active .entry,.frame.active .fr,.frame.active .cover{
+      animation:rise .5s cubic-bezier(.2,.7,.2,1) both}
+    .frame.active .entry:nth-child(2){animation-delay:.06s}
+    .frame.active .entry:nth-child(3){animation-delay:.12s}
+    .frame.active .entry:nth-child(4){animation-delay:.18s}
+    .frame.active .fr:nth-child(2){animation-delay:.06s}
+    .frame.active .fr:nth-child(3){animation-delay:.12s}
+    .frame.active .fr:nth-child(4){animation-delay:.18s}
+    @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+  }
+</style>
+</head>
+<body>
+
+<div class="chrome">
+  <div class="mark">WeTrace<span>Style Directions</span></div>
+  <nav class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-tab="paper">A 纸质编年</button>
+    <button role="tab" aria-selected="false" data-tab="film">B 胶片放映</button>
+    <button role="tab" aria-selected="false" data-tab="edit">C 编辑部</button>
+  </nav>
+</div>
+<div class="hint">同一份示例数据、同一套信息结构，只换视觉语言。按数字键 1 / 2 / 3 也可切换。</div>
+
+<div class="stage">
+  <div class="scalebox" id="scalebox">
+
+    <!-- ================= A 纸质编年 ================= -->
+    <section class="frame theme-paper active" id="frame-paper">
+      <aside class="side">
+        <div class="brand"><b>WeTrace</b><i>心迹</i></div>
+        <div class="side-rule"></div>
+        <div class="rel-list">
+          <div class="rel active">
+            <div class="avatar">哲</div>
+            <div class="who"><div class="name">阿哲</div><div class="sub">昨天 · 聊了 42 分钟</div></div>
+          </div>
+          <div class="rel">
+            <div class="avatar">林</div>
+            <div class="who"><div class="name">小林</div><div class="sub">10 月 21 日 · 最后一条是你发的</div></div>
+          </div>
+          <div class="rel">
+            <div class="avatar">妈</div>
+            <div class="who"><div class="name">妈妈</div><div class="sub">10 月 18 日</div></div>
+          </div>
+          <div class="rel">
+            <div class="avatar">周</div>
+            <div class="who"><div class="name">周队</div><div class="sub">9 月 30 日</div></div>
+          </div>
+          <div class="rel">
+            <div class="avatar">陈</div>
+            <div class="who"><div class="name">陈老师</div><div class="sub">8 月 12 日 · 已归档</div></div>
+          </div>
+        </div>
+        <div class="new-rel">＋ 新建关系档案</div>
+      </aside>
+
+      <main class="main">
+        <div class="doc-kicker">Relationship archive · 私人档案</div>
+        <h1>我<em>与</em>阿哲</h1>
+        <div class="doc-meta">2023 年 9 月 — 2026 年 10 月 · 本地 12,480 条消息 · 覆盖 94%</div>
+        <div class="doc-tools"><span>重新生成</span><span>导出</span></div>
+
+        <div class="ledger-stats">
+          <div class="ls"><div class="k">我 发言</div><div class="v">6,412<small>54%</small></div></div>
+          <div class="ls"><div class="k">TA 发言</div><div class="v">6,068<small>46%</small></div></div>
+          <div class="ls"><div class="k">回复中位</div><div class="v">8<small>分钟</small></div></div>
+          <div class="ls"><div class="k">最长对话</div><div class="v">2.4<small>小时</small></div></div>
+        </div>
+
+        <div class="ledger">
+          <div class="year-tag" style="top:2px">2024</div>
+          <article class="entry">
+            <div class="season">春 · 3 月 — 6 月</div>
+            <h3>开始频繁联系</h3>
+            <p>回复间隔从两天缩短到几小时，出现了固定的晚间问候。话题从工作扩展到各自的日常。</p>
+            <div class="ev"><b>证据 12 条</b><span class="dot"></span>已确认</div>
+          </article>
+          <article class="entry">
+            <div class="season">夏 · 7 月 — 8 月</div>
+            <h3>第一次一起旅行</h3>
+            <p>7 月 12 日出现第一段行程讨论；此后连续两周每天都有消息，语速与句长同时上升。</p>
+            <div class="ev"><b>证据 8 条</b><span class="dot"></span>已确认</div>
+          </article>
+          <div class="year-tag" style="top:212px">2025</div>
+          <article class="entry">
+            <div class="season">冬 · 12 月 — 次年 2 月</div>
+            <h3>节奏慢下来</h3>
+            <p>平均回复间隔升至 19 小时，但周末仍有长对话。说话方式没有变冷，只是频率下降。</p>
+            <div class="ev"><b>证据 5 条</b><span class="dot"></span>AI 观察 · 待确认</div>
+          </article>
+          <article class="entry" style="padding-bottom:0">
+            <div class="season">2026 · 9 月 — 至今</div>
+            <h3>重新聊起近况</h3>
+            <p>连续三天聊到凌晨，话题回到工作与搬家。你在这段里主动发起 7 次。</p>
+            <div class="ev"><b>证据 3 条</b><span class="dot"></span>待确认</div>
+          </article>
+        </div>
+
+        <div class="foot"><span>2023 年 9 月 14 日 · 本地记录起点</span><span>PAGE 01 / 04</span></div>
+      </main>
+    </section>
+
+    <!-- ================= B 胶片放映 ================= -->
+    <section class="frame theme-film" id="frame-film">
+      <aside class="side">
+        <div class="brand"><b>WeTrace</b><i>心迹</i></div>
+        <div class="side-rule"></div>
+        <div class="rel-list">
+          <div class="rel active">
+            <div class="avatar">哲</div>
+            <div class="who"><div class="name">阿哲</div><div class="sub">昨天 · 42 分钟</div></div>
+          </div>
+          <div class="rel">
+            <div class="avatar">林</div>
+            <div class="who"><div class="name">小林</div><div class="sub">10 月 21 日</div></div>
+          </div>
+          <div class="rel">
+            <div class="avatar">妈</div>
+            <div class="who"><div class="name">妈妈</div><div class="sub">10 月 18 日</div></div>
+          </div>
+          <div class="rel">
+            <div class="avatar">周</div>
+            <div class="who"><div class="name">周队</div><div class="sub">9 月 30 日</div></div>
+          </div>
+          <div class="rel">
+            <div class="avatar">陈</div>
+            <div class="who"><div class="name">陈老师</div><div class="sub">已归档</div></div>
+          </div>
+        </div>
+        <div class="new-rel">＋ 新建关系档案</div>
+      </aside>
+
+      <main class="main">
+        <div class="big-year">2026</div>
+        <div class="film-kicker">A relationship in four acts</div>
+        <h1>我和阿哲<span>，四年四幕</span></h1>
+        <div class="film-meta">2023.09 — 2026.10 · 12,480 条消息 · 覆盖 94%</div>
+
+        <div class="strip">
+          <div class="sprocket top"></div>
+          <div class="frames">
+            <div class="fr">
+              <div class="no">ACT 01 / 2024</div>
+              <div class="date">春 · 3—6 月</div>
+              <div class="ttl">开始频繁联系</div>
+              <div class="mini"><i style="height:12px"></i><i style="height:18px"></i><i style="height:14px"></i><i style="height:22px"></i><i style="height:17px"></i><i style="height:26px"></i><i style="height:20px"></i><i style="height:28px"></i></div>
+            </div>
+            <div class="fr sel">
+              <div class="no">ACT 02 / 2024</div>
+              <div class="date">夏 · 7—8 月</div>
+              <div class="ttl">第一次一起旅行</div>
+              <div class="mini"><i style="height:20px"></i><i style="height:26px"></i><i style="height:24px"></i><i style="height:32px"></i><i style="height:28px"></i><i style="height:34px"></i><i style="height:30px"></i><i style="height:22px"></i></div>
+            </div>
+            <div class="fr">
+              <div class="no">ACT 03 / 2025</div>
+              <div class="date">冬 · 12—2 月</div>
+              <div class="ttl">节奏慢下来</div>
+              <div class="mini"><i style="height:9px"></i><i style="height:14px"></i><i style="height:8px"></i><i style="height:12px"></i><i style="height:7px"></i><i style="height:11px"></i><i style="height:6px"></i><i style="height:10px"></i></div>
+            </div>
+            <div class="fr">
+              <div class="no">ACT 04 / 2026</div>
+              <div class="date">秋 · 9 月 —</div>
+              <div class="ttl">重新聊起近况</div>
+              <div class="mini"><i style="height:16px"></i><i style="height:21px"></i><i style="height:27px"></i><i style="height:24px"></i><i style="height:31px"></i><i style="height:29px"></i><i style="height:33px"></i><i style="height:25px"></i></div>
+            </div>
+          </div>
+          <div class="sprocket bottom"></div>
+        </div>
+
+        <div class="chapter">
+          <div class="l">
+            <span class="tag">当前章节 · 已确认</span>
+            <h2>第一次一起旅行</h2>
+            <p>7 月 12 日出现第一段行程讨论；此后连续两周每天都有消息，语速与句长同时上升。这段里有 8 条原文可以回看。</p>
+            <div class="film-stats">
+              <div class="fs"><div class="k">本段消息</div><div class="v">1,842</div></div>
+              <div class="fs"><div class="k">平均回复</div><div class="v">11<small>分钟</small></div></div>
+              <div class="fs"><div class="k">主动发起</div><div class="v">你 58%</div></div>
+            </div>
+          </div>
+          <div class="quote">
+            <div class="q">“那我们就订周五晚上的，你别又临时改。”<br><br>“行，这次我提前把票买好。”</div>
+            <div class="src">2024 年 7 月 12 日 · 21:48 · 证据 8 条</div>
+          </div>
+        </div>
+      </main>
+    </section>
+
+    <!-- ================= C 编辑部 ================= -->
+    <section class="frame theme-edit" id="frame-edit">
+      <aside class="side">
+        <div class="brand"><b>WeTrace</b><i>心迹</i></div>
+        <div class="masthead-rule"></div>
+        <div class="issue">Relationship weekly · No.03</div>
+        <div class="rel-list" style="margin-top:14px">
+          <div class="rel active"><div class="idx">01</div><div class="who"><div class="name">阿哲</div><div class="sub">昨天 · 42 分钟</div></div></div>
+          <div class="rel"><div class="idx">02</div><div class="who"><div class="name">小林</div><div class="sub">10 月 21 日</div></div></div>
+          <div class="rel"><div class="idx">03</div><div class="who"><div class="name">妈妈</div><div class="sub">10 月 18 日</div></div></div>
+          <div class="rel"><div class="idx">04</div><div class="who"><div class="name">周队</div><div class="sub">9 月 30 日</div></div></div>
+          <div class="rel"><div class="idx">05</div><div class="who"><div class="name">陈老师</div><div class="sub">已归档</div></div></div>
+        </div>
+        <div class="new-rel">+ 新建档案</div>
+      </aside>
+
+      <main class="main">
+        <div class="topline">
+          <div class="l">关系特刊 · 我 与 阿哲</div>
+          <div class="r">2023.09 — 2026.10 / 12,480 条</div>
+        </div>
+
+        <h1>我们是怎么<br><em>慢慢熟悉</em>的</h1>
+
+        <div class="deck">
+          <div class="body">
+            <p>最初的两个月，对话只发生在工作日的白天，话题不超过三句。转折出现在次年的三月：回复间隔从两天缩短到几小时，晚间问候开始固定出现。</p>
+            <p>七月的一段行程讨论，让聊天第一次延伸到屏幕之外。此后连续两周每天都有消息，句子变长，语气词变多，称呼也换了一次。</p>
+            <p>到了冬天，频率明显下降，但周末仍有长对话。说话方式没有变冷，只是生活的交集变少了。</p>
+          </div>
+          <div class="pull">
+            <q>“行，这次我提前把票买好。”</q>
+            <div class="src">2024.07.12 · 21:48 · 证据 8 条</div>
+          </div>
+        </div>
+
+        <div class="covers">
+          <div class="cover a">
+            <div class="yr">CHAPTER 01 · 2024</div>
+            <div class="tt">开始频繁联系</div>
+            <div class="sub">回复间隔 48h → 3h</div>
+          </div>
+          <div class="cover b">
+            <div class="yr" style="color:#a89984">CHAPTER 02 · 2024</div>
+            <div class="tt">第一次一起旅行</div>
+            <div class="sub" style="color:#a89984">连续 14 天每天对话</div>
+          </div>
+          <div class="cover c">
+            <div class="yr">CHAPTER 03 · 2025</div>
+            <div class="tt">节奏慢下来</div>
+            <div class="sub">回复间隔 19h · 待确认</div>
+          </div>
+        </div>
+
+        <div class="stats">
+          <div class="st"><div class="k">Messages</div><div class="v">12,480</div></div>
+          <div class="st" style="padding-left:18px"><div class="k">Span</div><div class="v">3 年 1 个月</div></div>
+          <div class="st" style="padding-left:18px"><div class="k">Initiated by me</div><div class="v">54%</div></div>
+          <div class="st" style="padding-left:18px"><div class="k">Confirmed</div><div class="v">2 / 4</div></div>
+        </div>
+
+        <div class="pageno">01 — 04</div>
+      </main>
+    </section>
+
+  </div>
+</div>
+
+<script>
+  const box = document.getElementById('scalebox');
+  const frames = [...document.querySelectorAll('.frame')];
+  const buttons = [...document.querySelectorAll('.tabs button')];
+
+  function fit() {
+    const w = box.clientWidth;
+    const s = Math.min(1, w / 1280);
+    frames.forEach((f) => {
+      f.style.transform = `scale(${s})`;
+    });
+    box.style.height = `${800 * s}px`;
+  }
+
+  function select(name) {
+    frames.forEach((f) => f.classList.toggle('active', f.id === `frame-${name}`));
+    buttons.forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === name)));
+    fit();
+  }
+
+  buttons.forEach((b) => b.addEventListener('click', () => select(b.dataset.tab)));
+  window.addEventListener('resize', fit);
+  window.addEventListener('keydown', (e) => {
+    if (e.key === '1') select('paper');
+    if (e.key === '2') select('film');
+    if (e.key === '3') select('edit');
+  });
+  fit();
+</script>
+</body>
+</html>

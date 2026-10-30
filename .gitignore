@@ -1,0 +1,43 @@
+# Dependencies and generated output
+node_modules/
+.pnpm-store/
+out/
+dist/
+.cache/
+coverage/
+*.tsbuildinfo
+
+# Local previews, screenshots and editor state
+.screenshots/
+.trae-html-share-packages/
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local secrets and WeChat data
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.sqlite3-*
+xwechat_files/
+wxid_*/
+
+# Locally compiled helper tools
+tools/wxkey/wxkey
+tools/wxkey/login-capture
+
+# Logs and OS metadata
+*.log
+.DS_Store
+Thumbs.db

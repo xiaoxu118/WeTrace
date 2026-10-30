@@ -1,0 +1,27 @@
+appId: com.wetrace.app
+productName: WeTrace
+directories:
+  buildResources: build
+asarUnpack:
+  - '**/node_modules/koffi/**/*'
+  - '**/node_modules/sherpa-onnx*/**/*'
+  - '**/node_modules/silk-wasm/**/*'
+files:
+  - out/**
+extraMetadata:
+  main: out/main/index.js
+extraResources:
+  - from: resources/wcdb
+    to: wcdb
+  - from: resources/xkey_helper
+    to: xkey_helper
+  - from: resources/xkey_helper_4_1_13
+    to: xkey_helper_4_1_13
+  - from: resources/xkey_helper_4_1_13.sha256
+    to: xkey_helper_4_1_13.sha256
+mac:
+  icon: build/icon.icns
+  target:
+    - dmg
+    - zip
+  artifactName: ${productName}-${version}-${arch}.${ext}

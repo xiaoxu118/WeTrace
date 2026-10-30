@@ -1,0 +1,50 @@
+const { app, BrowserWindow } = require('electron')
+const fs = require('node:fs/promises')
+const path = require('node:path')
+const assert = require('node:assert/strict')
+app.on('window-all-closed', () => {})
+app.whenReady().then(async () => {
+  const reference = await fs.readFile(path.resolve('scripts/test-report-ui.cjs'), 'utf8')
+  const begin = reference.indexOf('await fs.writeFile(preload, `') + 'await fs.writeFile(preload, `'.length
+  const end = reference.indexOf('\n`)', begin)
+  let source = reference.slice(begin, end)
+  source = source.replace("contextBridge.exposeInMainWorld('wetrace', api)", `
+let fixtureIndexState = 'ready'; const fixtureActions = []
+api.controlChatIndex = async query => { fixtureActions.push(query.action); if (query.action === 'pause') fixtureIndexState = 'paused'; if (query.action === 'start' || query.action === 'rebuild') fixtureIndexState = 'building'; return { ok:true, data: { state:fixtureIndexState, messages:125000, conversations:350, completedStores:350,totalStores:350,current:'',updatedAt:new Date().toISOString(),errors:[] } } }
+api.searchChatIndex = async query => ({ok:true,matches:[{conversationId:'history@chatroom',conversationName:'历史群聊',id:'old',createdAt:Date.now(),text:'很久以前的目标记录'}]})
+api.getIndexedConversation = async query => ({ok:true,conversation:{...data.conversations[0],id:query.conversationId,name:'历史群聊',messages:[{...data.conversations[0].messages[0],id:'old',text:'很久以前的目标记录'}]}})
+api.indexTestActions = async () => fixtureActions
+contextBridge.exposeInMainWorld('wetrace', api)
+`)
+  await fs.mkdir('.cache', { recursive:true })
+  const preload = path.resolve('.cache/all-chat-index-ui-preload.cjs')
+  await fs.writeFile(preload, source)
+  const window = new BrowserWindow({show:false,width:1280,height:900,webPreferences:{preload,sandbox:false,offscreen:true}})
+  try {
+    window.webContents.on('console-message', (_event, _level, message) => console.log('renderer:', message))
+    await window.loadFile(path.resolve('out/renderer/index.html'))
+    const run = code => window.webContents.executeJavaScript(code)
+    const until = async code => { for(let i=0;i<80;i++){if(await run(code))return;await new Promise(resolve=>setTimeout(resolve,100))} throw new Error('UI timeout: '+code+' '+await run('document.body.innerText.slice(0,1500)')) }
+    await until(`!!document.querySelector('.conv-list')`)
+    await run(`document.querySelector('button[aria-label="设置"]').click()`)
+    await until(`!!document.querySelector('.chat-index-panel') && document.querySelector('.chat-index-panel').textContent.includes('125,000')`)
+    await run(`Array.from(document.querySelectorAll('.chat-index-panel button')).find(button=>button.textContent==='更新索引').click()`)
+    await until(`document.querySelector('.chat-index-panel').textContent.includes('暂停建立')`)
+    await run(`Array.from(document.querySelectorAll('.chat-index-panel button')).find(button=>button.textContent==='暂停建立').click()`)
+    await until(`document.querySelector('.chat-index-panel').textContent.includes('继续建立')`)
+    await run(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`)
+    await fs.mkdir('.screenshots',{recursive:true})
+    await fs.writeFile('.screenshots/all-chat-index-settings.png',(await window.webContents.capturePage()).toPNG())
+    await run(`document.querySelector('button[aria-label="消息"]').click()`)
+    await run(`(()=>{const input=document.querySelector('input[aria-label="搜索联系人、群聊、聊天记录"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'目标记录');input.dispatchEvent(new Event('input',{bubbles:true}))})()`)
+    await until(`!!document.querySelector('.indexed-search-match')`)
+    await run(`document.querySelector('.indexed-search-match').click()`)
+    await until(`document.querySelector('.chat-head')?.textContent.includes('历史群聊') && document.querySelector('.chat-scroll')?.textContent.includes('很久以前的目标记录')`)
+    assert.ok((await run(`window.wetrace.indexTestActions()`)).includes('pause'))
+    assert.equal(await run(`document.documentElement.scrollWidth<=innerWidth`),true)
+    await fs.mkdir('.screenshots',{recursive:true})
+    await run(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`)
+    await fs.writeFile('.screenshots/all-chat-index-ui.png',(await window.webContents.capturePage()).toPNG())
+    console.log('All-chat index UI passed: automatic startup, record counts, start/pause/resume controls, historical search and navigation')
+  } finally { window.destroy();await fs.rm(preload,{force:true}) }
+}).then(()=>app.exit(0)).catch(error=>{console.error(error);app.exit(1)})

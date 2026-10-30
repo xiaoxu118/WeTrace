@@ -1,0 +1,42 @@
+{
+  "name": "wetrace",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "node scripts/run-electron.mjs dev",
+    "build": "node scripts/run-electron.mjs build",
+    "package": "pnpm build && electron-builder --config electron-builder.yml",
+    "start": "node scripts/run-electron.mjs preview",
+    "typecheck": "tsc --noEmit",
+    "test:local": "node scripts/selftest.mjs",
+    "test:report": "pnpm build && node --experimental-strip-types scripts/test-report-topics.mjs && node --experimental-strip-types scripts/test-report-volume.mjs && node --experimental-strip-types scripts/test-chat-index.mjs && node --experimental-strip-types scripts/test-report-disk-index.mjs && node scripts/test-report-loading.cjs && node --experimental-strip-types scripts/test-report-concurrency.mjs && node --experimental-strip-types scripts/test-media-cache-stats.mjs && node --experimental-strip-types scripts/test-image-description-cache.mjs && node --experimental-strip-types scripts/test-voice-transcription-cache.mjs && node --experimental-strip-types scripts/test-report-selection.mjs && node --experimental-strip-types scripts/test-report-snapshots.mjs && node --experimental-strip-types scripts/test-report-history.mjs && node --experimental-strip-types scripts/test-report-diagnostics.mjs && node --experimental-strip-types scripts/test-report-model.mjs && node scripts/run-electron.mjs exec scripts/test-default-report.cjs && node scripts/run-electron.mjs exec scripts/test-report-feed.cjs && node scripts/run-electron.mjs exec scripts/test-report-generation.cjs && node scripts/run-electron.mjs exec scripts/test-report-ui.cjs",
+    "test:startup": "node --experimental-strip-types scripts/test-startup-environment.mjs && node scripts/test-safe-electron-launch.mjs && node scripts/run-electron.mjs exec scripts/test-macos-cursor.cjs",
+    "test:index": "pnpm build && node --experimental-strip-types scripts/test-chat-index.mjs && node --experimental-strip-types scripts/test-chat-index-incremental.mjs && node --experimental-strip-types scripts/test-chat-index-search.mjs && node scripts/run-electron.mjs exec scripts/test-all-chat-index-ui.cjs",
+    "test:patterns": "node --experimental-strip-types scripts/test-chat-patterns.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "fzstd": "^0.1.1",
+    "koffi": "3.1.0",
+    "lucide-react": "^1.63.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "sherpa-onnx-node": "^2.0.1",
+    "silk-wasm": "^3.7.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "electron": "^45.1.0",
+    "electron-builder": "^26.18.0",
+    "electron-vite": "^6.0.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5"
+  }
+}

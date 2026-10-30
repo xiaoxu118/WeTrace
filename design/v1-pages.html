@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WeTrace · 第一版页面结构</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --bg:#f4f5f7;
+    --card:#ffffff;
+    --ink:#12141a;
+    --muted:#6b7280;
+    --line:#dfe2e8;
+    --line-strong:#c3c8d2;
+    --accent:#2563eb;
+    --accent-soft:#eef3ff;
+    --sans:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+    --mono:"SF Mono",Menlo,Consolas,monospace;
+  }
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);-webkit-font-smoothing:antialiased}
+  .chrome{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:24px;
+    padding:14px 28px;background:rgba(244,245,247,.94);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+  .chrome .mark{font-size:15px;font-weight:600;letter-spacing:.02em}
+  .chrome .mark span{font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);margin-left:10px;font-weight:500}
+  .tabs{display:flex;gap:4px;margin-left:auto}
+  .tabs button{border:1px solid transparent;background:transparent;color:var(--muted);
+    font:500 12.5px/1 var(--sans);padding:9px 14px;border-radius:8px;cursor:pointer;transition:.15s}
+  .tabs button:hover{background:#e9ebef;color:var(--ink)}
+  .tabs button[aria-selected="true"]{background:var(--ink);color:#fff}
+  .note{padding:14px 28px 0;color:var(--muted);font-size:12.5px;line-height:1.7;max-width:1100px}
+  .stage{padding:18px 28px 72px}
+  .scalebox{position:relative;width:100%;max-width:1280px;margin:0 auto}
+  .frame{position:absolute;top:0;left:0;width:1280px;display:none;transform-origin:top left;
+    overflow:hidden;background:var(--bg)}
+  .frame.active{display:block}
+
+  /* ---------- 通用线框元素 ---------- */
+  .wf{background:var(--card);border:1px solid var(--line);border-radius:10px}
+  .dash{border:1px dashed var(--line-strong);border-radius:8px;background:#fbfbfc}
+  .lbl{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+  .ph{background:linear-gradient(180deg,#eceef2,#f4f5f8);border-radius:4px}
+  .tag{display:inline-flex;align-items:center;gap:6px;font-size:10.5px;padding:3px 8px;border-radius:999px;
+    border:1px solid var(--line-strong);color:var(--muted);background:#fff}
+  .tag.blue{border-color:#b9cdfd;color:var(--accent);background:var(--accent-soft)}
+  .num{position:absolute;width:20px;height:20px;border-radius:50%;background:var(--accent);color:#fff;
+    font:600 10.5px/20px var(--mono);text-align:center;z-index:6;box-shadow:0 1px 4px rgba(37,99,235,.35)}
+  .anno{font-size:11.5px;line-height:1.6;color:var(--muted)}
+  .anno b{color:var(--ink);font-weight:600}
+
+  /* ---------- 页面清单 ---------- */
+  .inventory{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;padding:22px 0}
+  .pg{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;display:flex;flex-direction:column}
+  .pg .thumb{height:300px;background:#fbfbfd;border-bottom:1px solid var(--line);position:relative;padding:12px}
+  .pg .cap{padding:12px 14px 14px}
+  .pg .cap h4{font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px}
+  .pg .cap h4 i{font:600 10px var(--mono);color:var(--accent);font-style:normal}
+  .pg .cap p{font-size:11px;line-height:1.6;color:var(--muted);margin-top:5px}
+  .pg.primary{border-color:#b9cdfd;box-shadow:0 0 0 3px rgba(37,99,235,.08)}
+  .pg.primary .cap h4 i{background:var(--accent);color:#fff;padding:1px 5px;border-radius:3px}
+
+  /* 小屏线框内部 */
+  .m{background:#fff;border:1px solid var(--line);border-radius:6px;font-size:8px;color:#9aa1ad;display:flex;
+    align-items:center;justify-content:center;letter-spacing:.04em}
+  .m.fill{background:#eff1f5}
+  .row{display:flex;gap:6px}
+
+  /* ---------- 主页面 ---------- */
+  .app{display:flex;width:1280px;height:760px;background:var(--card);border-bottom:1px solid var(--line);position:relative}
+  .app .rail{width:236px;flex:0 0 236px;border-right:1px solid var(--line);padding:18px 14px;position:relative;background:#fcfcfd}
+  .app .body{flex:1;padding:18px 26px 0;position:relative}
+  .brandline{display:flex;align-items:center;justify-content:space-between}
+  .brandline b{font-size:14px;letter-spacing:.02em}
+  .search{margin-top:14px;height:28px;border:1px solid var(--line);border-radius:7px;display:flex;
+    align-items:center;padding:0 9px;font-size:10.5px;color:#9aa1ad;background:#fff}
+  .rel{display:flex;gap:9px;align-items:center;padding:9px 7px;border-radius:7px;margin-top:3px}
+  .rel .av{width:26px;height:26px;border-radius:50%;background:#e6e9ef;color:#7c8494;font-size:10px;
+    display:grid;place-items:center;flex:0 0 26px}
+  .rel .nm{font-size:11.5px;color:#2b303a}
+  .rel .sb{font-size:9.5px;color:#9aa1ad;margin-top:1px}
+  .rel.on{background:var(--accent-soft)}
+  .rel.on .nm{color:var(--accent);font-weight:600}
+  .newrel{margin-top:12px;height:30px;border:1px dashed var(--line-strong);border-radius:7px;display:grid;
+    place-items:center;font-size:10.5px;color:var(--muted)}
+
+  .head{display:flex;align-items:flex-start;justify-content:space-between}
+  .head h1{font-size:22px;letter-spacing:-.01em}
+  .head .sub{font-size:11px;color:var(--muted);margin-top:5px;display:flex;align-items:center;gap:8px}
+  .head .acts{display:flex;gap:7px}
+  .btn{height:28px;padding:0 12px;border-radius:7px;border:1px solid var(--line-strong);background:#fff;
+    font-size:11px;color:#3b4250;display:flex;align-items:center}
+  .btn.primary{background:var(--ink);border-color:var(--ink);color:#fff}
+
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:16px}
+  .stat{border:1px solid var(--line);border-radius:9px;padding:10px 12px;background:#fff}
+  .stat .k{font-size:9.5px;letter-spacing:.08em;color:#9aa1ad;text-transform:uppercase}
+  .stat .v{font-size:17px;font-weight:600;margin-top:4px;letter-spacing:-.01em}
+  .stat .v small{font-size:10px;font-weight:400;color:var(--muted);margin-left:4px}
+
+  .tl{margin-top:18px;position:relative;padding-left:76px}
+  .tl .rail-year{position:absolute;left:0;font:600 11px var(--mono);color:#9aa1ad;letter-spacing:.06em}
+  .chap{position:relative;border:1px solid var(--line);border-radius:10px;padding:13px 14px;margin-bottom:10px;background:#fff}
+  .chap::before{content:"";position:absolute;left:-19px;top:20px;width:7px;height:7px;border-radius:50%;
+    background:#fff;border:1.5px solid var(--line-strong)}
+  .chap.on::before{border-color:var(--accent);background:var(--accent)}
+  .chap .top{display:flex;align-items:center;gap:8px}
+  .chap .when{font:600 9.5px var(--mono);color:#9aa1ad;letter-spacing:.06em}
+  .chap h3{font-size:13.5px;font-weight:600;margin-top:5px}
+  .chap p{font-size:11px;line-height:1.6;color:#5b6474;margin-top:4px;max-width:600px}
+  .chap .bottom{display:flex;align-items:center;gap:8px;margin-top:9px}
+  .evi{font-size:10px;color:#7c8494;display:inline-flex;align-items:center;gap:4px}
+  .evi u{text-decoration:none;color:var(--accent);border-bottom:1px solid #b9cdfd}
+
+  .drawer{position:absolute;top:0;right:0;bottom:0;width:300px;background:#fff;border-left:1px solid var(--line);
+    box-shadow:-16px 0 32px rgba(18,20,26,.06);padding:18px 16px}
+  .drawer .dh{display:flex;justify-content:space-between;align-items:center}
+  .drawer .dh b{font-size:12px}
+  .msg{border:1px solid var(--line);border-radius:8px;padding:9px 10px;margin-top:9px;background:#fcfcfd}
+  .msg .who{font-size:9.5px;color:#9aa1ad;display:flex;justify-content:space-between}
+  .msg .txt{font-size:11px;line-height:1.6;color:#3b4250;margin-top:5px}
+  .msg.hit{border-color:#b9cdfd;background:var(--accent-soft)}
+
+  /* ---------- 状态 ---------- */
+  .states{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:20px 0}
+  .state-box{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .state-box .hd{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line)}
+  .state-box .hd b{font-size:12px}
+  .state-box .hd span{font-size:10px;color:var(--muted);margin-left:auto}
+  .state-canvas{height:300px;padding:16px;background:#fbfbfd;position:relative}
+  .empty{height:100%;border:1px dashed var(--line-strong);border-radius:10px;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:8px;background:#fff}
+  .empty .ic{width:34px;height:34px;border-radius:50%;background:#eef0f4;display:grid;place-items:center;color:#9aa1ad;font-size:15px}
+  .empty b{font-size:12.5px}
+  .empty p{font-size:10.5px;color:var(--muted);max-width:260px;text-align:center;line-height:1.6}
+  .prog{background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px;height:100%;display:flex;flex-direction:column;gap:10px}
+  .prog .bar{height:6px;border-radius:99px;background:#eceef2;overflow:hidden}
+  .prog .bar i{display:block;height:100%;width:46%;background:var(--accent);border-radius:99px}
+  .prog .steps{display:flex;flex-direction:column;gap:7px;font-size:10.5px;color:#7c8494}
+  .prog .steps div{display:flex;justify-content:space-between}
+  .prog .steps b{color:var(--ink);font-weight:500}
+</style>
+</head>
+<body>
+
+<div class="chrome">
+  <div class="mark">WeTrace<span>V1 Structure</span></div>
+  <nav class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-tab="pages">页面清单</button>
+    <button role="tab" aria-selected="false" data-tab="main">主页面结构</button>
+    <button role="tab" aria-selected="false" data-tab="states">关键状态</button>
+  </nav>
+</div>
+<div class="note">先定内容和结构，不定视觉。配色、字体、圆角都只是占位，后续风格确定后整体替换。示例数据均为虚构。</div>
+
+<div class="stage">
+  <div class="scalebox" id="scalebox">
+
+    <!-- ================= 1 页面清单 ================= -->
+    <section class="frame active" id="frame-pages">
+      <div class="inventory">
+        <div class="pg">
+          <div class="thumb">
+            <div style="height:100%;display:flex;flex-direction:column;gap:8px;padding:14px 10px">
+              <div class="m" style="height:14px;border:none;background:none;color:#9aa1ad;justify-content:flex-start">WeTrace</div>
+              <div class="m" style="height:52px;flex-direction:column;gap:4px">
+                <span>检测到微信 4.1.15</span><span style="color:#2563eb">已找到 1 个账号 · 12.4 万条消息</span>
+              </div>
+              <div class="m fill" style="height:26px">确认同步</div>
+              <div class="m" style="height:90px;border-style:dashed">同步进度 / 覆盖范围</div>
+              <div class="m" style="height:34px;margin-top:auto;border-style:dashed">手动选择数据目录</div>
+            </div>
+          </div>
+          <div class="cap"><h4><i>01</i>连接微信</h4><p>首次启动。自动探测目录、账号、消息规模；失败时可手动选目录并重试。</p></div>
+        </div>
+
+        <div class="pg">
+          <div class="thumb">
+            <div style="height:100%;display:flex;flex-direction:column;gap:6px">
+              <div class="m" style="height:24px;justify-content:flex-start;padding-left:8px">关系列表 · 搜索</div>
+              <div class="m" style="height:22px;justify-content:flex-start;padding-left:8px">筛选：全部 / 朋友 / 恋人</div>
+              <div class="m fill" style="height:44px"></div>
+              <div class="m" style="height:44px"></div>
+              <div class="m" style="height:44px"></div>
+              <div class="m" style="height:44px"></div>
+              <div class="m" style="height:28px;border-style:dashed;margin-top:auto">＋ 新建关系档案</div>
+            </div>
+          </div>
+          <div class="cap"><h4><i>02</i>关系列表</h4><p>所有已建立的关系；显示标签、最近互动、数据覆盖度，支持搜索与归档。</p></div>
+        </div>
+
+        <div class="pg primary">
+          <div class="thumb">
+            <div style="height:100%;display:flex;gap:6px">
+              <div style="width:26%;display:flex;flex-direction:column;gap:5px">
+                <div class="m fill" style="height:18px"></div>
+                <div class="m" style="height:18px"></div>
+                <div class="m" style="height:18px"></div>
+                <div class="m" style="height:18px"></div>
+              </div>
+              <div style="flex:1;display:flex;flex-direction:column;gap:5px">
+                <div class="m" style="height:26px;justify-content:space-between;padding:0 8px">我 与 阿哲 <span style="color:#2563eb">同步正常</span></div>
+                <div class="row"><div class="m" style="height:26px;flex:1"></div><div class="m" style="height:26px;flex:1"></div><div class="m" style="height:26px;flex:1"></div><div class="m" style="height:26px;flex:1"></div></div>
+                <div class="m" style="height:40px;justify-content:flex-start;padding-left:8px">2024 春 · 开始频繁联系</div>
+                <div class="m" style="height:40px;justify-content:flex-start;padding-left:8px">2024 夏 · 第一次一起旅行</div>
+                <div class="m" style="height:40px;justify-content:flex-start;padding-left:8px">2025 冬 · 节奏慢下来</div>
+                <div class="m" style="height:40px;justify-content:flex-start;padding-left:8px">2026 秋 · 重新聊起近况</div>
+              </div>
+            </div>
+          </div>
+          <div class="cap"><h4><i>03</i>关系档案 · 时间线</h4><p>第一版的核心页面。头部、统计、阶段时间线、关键时刻与原文证据都在这里。</p></div>
+        </div>
+
+        <div class="pg">
+          <div class="thumb">
+            <div style="height:100%;display:flex;flex-direction:column;gap:8px">
+              <div class="m" style="height:22px;justify-content:flex-start;padding-left:8px">设置</div>
+              <div class="m" style="height:22px;justify-content:flex-start;padding-left:8px;border-color:#2563eb;color:#2563eb">AI 模型</div>
+              <div class="m" style="height:22px;justify-content:flex-start;padding-left:8px">同步</div>
+              <div class="m" style="height:22px;justify-content:flex-start;padding-left:8px">数据管理</div>
+              <div class="m" style="height:64px;border-style:dashed;margin-top:6px">Provider / 模型 / Key / 测试连接</div>
+              <div class="m" style="height:40px;margin-top:auto;border-style:dashed">清空本地数据</div>
+            </div>
+          </div>
+          <div class="cap"><h4><i>04</i>设置</h4><p>只放三块：AI Provider、同步状态、数据管理（导出与清空）。</p></div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:24px;align-items:flex-start;padding:0 2px 30px">
+        <div class="anno" style="flex:1"><b>第一版只需要这 4 个页面。</b>时间线上的证据、确认/忽略、生成中都是页面内状态，不单独做页。</div>
+        <div class="anno" style="flex:1"><b>导航顺序即用户路径：</b>连接微信 → 关系列表 → 关系档案 → 设置。首次启动后默认落在关系列表。</div>
+        <div class="anno" style="flex:1"><b>P1 再做：</b>日报/周报独立页、自动化规则、共同群聊、问答检索。第一版不占位置。</div>
+      </div>
+    </section>
+
+    <!-- ================= 2 主页面结构 ================= -->
+    <section class="frame" id="frame-main">
+      <div class="app">
+        <div class="rail">
+          <span class="num" style="left:-10px;top:-10px">01</span>
+          <div class="brandline"><b>WeTrace</b><span class="lbl">心迹</span></div>
+          <div class="search">搜索关系 / 备注</div>
+          <div style="margin-top:12px">
+            <div class="rel on"><div class="av">哲</div><div><div class="nm">阿哲</div><div class="sb">昨天 · 42 分钟</div></div></div>
+            <div class="rel"><div class="av">林</div><div><div class="nm">小林</div><div class="sb">10 月 21 日</div></div></div>
+            <div class="rel"><div class="av">妈</div><div><div class="nm">妈妈</div><div class="sb">10 月 18 日</div></div></div>
+            <div class="rel"><div class="av">周</div><div><div class="nm">周队</div><div class="sb">9 月 30 日</div></div></div>
+            <div class="rel"><div class="av">陈</div><div><div class="nm">陈老师</div><div class="sb">已归档</div></div></div>
+          </div>
+          <div class="newrel">＋ 新建关系档案</div>
+        </div>
+
+        <div class="body">
+          <span class="num" style="left:16px;top:-4px">02</span>
+          <div class="head">
+            <div>
+              <h1>我 与 阿哲</h1>
+              <div class="sub">2023.09 — 2026.10 · 12,480 条消息 · 覆盖 94% <span class="tag">已同步 2 分钟前</span></div>
+            </div>
+            <div class="acts"><div class="btn">导出</div><div class="btn primary">重新生成</div></div>
+          </div>
+
+          <span class="num" style="left:0;top:96px">03</span>
+          <div class="stats">
+            <div class="stat"><div class="k">Messages</div><div class="v">12,480</div></div>
+            <div class="stat"><div class="k">我 主动发起</div><div class="v">54<small>%</small></div></div>
+            <div class="stat"><div class="k">回复中位</div><div class="v">8<small>分钟</small></div></div>
+            <div class="stat"><div class="k">最长对话</div><div class="v">2.4<small>小时</small></div></div>
+          </div>
+
+          <span class="num" style="left:16px;top:190px">04</span>
+          <div class="tl">
+            <div class="rail-year" style="top:14px">2024</div>
+            <div class="chap on">
+              <div class="top"><span class="when">2024.03 — 2024.06</span><span class="tag blue">已确认</span><span class="tag">阶段</span></div>
+              <h3>开始频繁联系</h3>
+              <p>回复间隔从两天缩短到几小时，固定晚间问候出现，话题从工作扩展到日常。</p>
+              <div class="bottom"><span class="evi">证据 <u>12 条</u></span><span class="evi">12 位发言人以外的 0 条</span></div>
+            </div>
+            <div class="chap">
+              <div class="top"><span class="when">2024.07 — 2024.08</span><span class="tag">待确认</span></div>
+              <h3>第一次一起旅行</h3>
+              <p>7 月 12 日出现第一段行程讨论；此后连续两周每天都有消息。</p>
+              <div class="bottom"><span class="evi">证据 <u>8 条</u></span></div>
+            </div>
+            <div class="rail-year" style="top:214px">2025</div>
+            <div class="chap">
+              <div class="top"><span class="when">2025.12 — 2026.02</span><span class="tag">AI 观察</span></div>
+              <h3>节奏慢下来</h3>
+              <p>平均回复间隔升至 19 小时，周末仍有长对话，说话方式没有明显变化。</p>
+              <div class="bottom"><span class="evi">证据 <u>5 条</u></span><span class="evi">可否定</span></div>
+            </div>
+            <div class="chap" style="margin-bottom:0">
+              <div class="top"><span class="when">2026.09 — 至今</span><span class="tag">待确认</span></div>
+              <h3>重新聊起近况</h3>
+              <p>连续三天聊到凌晨，话题回到工作与搬家。</p>
+              <div class="bottom"><span class="evi">证据 <u>3 条</u></span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="drawer">
+          <span class="num" style="left:-10px;top:10px">05</span>
+          <div class="dh"><b>原文证据 · 12 条</b><span class="lbl">ESC 关闭</span></div>
+          <div class="msg hit"><div class="who"><span>我</span><span>2024.03.18 23:41</span></div><div class="txt">今天怎么这么晚还没睡</div></div>
+          <div class="msg"><div class="who"><span>阿哲</span><span>2024.03.18 23:42</span></div><div class="txt">刚忙完，看到你消息了</div></div>
+          <div class="msg"><div class="who"><span>我</span><span>2024.03.19 22:10</span></div><div class="txt">那明天也这个点？</div></div>
+          <div class="msg"><div class="who"><span>阿哲</span><span>2024.03.19 22:11</span></div><div class="txt">行，我尽量</div></div>
+          <div style="margin-top:12px;font-size:10.5px;color:#9aa1ad;line-height:1.6">证据只读原库副本，不写回微信；关闭后回到时间线原位置。</div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:16px;padding:16px 2px 28px">
+        <div class="anno"><b>① 关系列表</b><br>唯一导航。显示最近互动，不显示消息预览。</div>
+        <div class="anno"><b>② 关系头</b><br>双方、跨度、消息量、覆盖度、同步状态；主操作只有导出和重新生成。</div>
+        <div class="anno"><b>③ 统计条</b><br>本地 SQL 算出，固定 4 项；点开可看口径说明。</div>
+        <div class="anno"><b>④ 时间线</b><br>阶段卡 + 年份轨道；卡片区分阶段、待确认、AI 观察。</div>
+        <div class="anno"><b>⑤ 证据抽屉</b><br>点角标从右侧滑出，显示原文和时间；不跳走页面。</div>
+      </div>
+    </section>
+
+    <!-- ================= 3 关键状态 ================= -->
+    <section class="frame" id="frame-states">
+      <div class="states">
+        <div class="state-box">
+          <div class="hd"><b>空状态 · 还没有时间线</b><span>首次进入 / 已同步但未生成</span></div>
+          <div class="state-canvas">
+            <div class="empty">
+              <div class="ic">◷</div>
+              <b>还没有生成这段关系的时间线</b>
+              <p>本地已同步 12,480 条消息。生成会按时间分块分析，只把文本内容发给你配置的模型。</p>
+              <div class="btn primary" style="margin-top:4px">生成时间线</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="state-box">
+          <div class="hd"><b>生成中 · 可取消</b><span>长任务不阻塞界面</span></div>
+          <div class="state-canvas">
+            <div class="prog">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <b style="font-size:12px">正在分析 2023.09 — 2026.10</b><span class="tag">46%</span>
+              </div>
+              <div class="bar"><i></i></div>
+              <div class="steps">
+                <div><span>① 冻结消息快照</span><b>完成</b></div>
+                <div><span>② 本地统计</span><b>完成</b></div>
+                <div><span>③ 分块语义抽取 4 / 9</span><b>进行中</b></div>
+                <div><span>④ 证据校验</span><span>等待</span></div>
+                <div><span>⑤ 写入新版本</span><span>等待</span></div>
+              </div>
+              <div class="btn" style="margin-top:auto;align-self:flex-start">取消</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="state-box">
+          <div class="hd"><b>证据展开 · 右侧抽屉</b><span>点击任意角标</span></div>
+          <div class="state-canvas">
+            <div style="display:flex;height:100%;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#fff">
+              <div style="flex:1;padding:12px;display:flex;flex-direction:column;gap:6px;background:#fbfbfd">
+                <div class="m" style="height:34px;justify-content:flex-start;padding-left:8px">2024 春 · 开始频繁联系</div>
+                <div class="m" style="height:34px;justify-content:flex-start;padding-left:8px;border-color:#b9cdfd;color:#2563eb">证据 12 条 →</div>
+                <div class="m" style="height:34px;justify-content:flex-start;padding-left:8px">2024 夏 · 第一次一起旅行</div>
+              </div>
+              <div style="width:44%;border-left:1px solid var(--line);padding:10px;display:flex;flex-direction:column;gap:6px">
+                <div class="m" style="height:12px;border:none;background:none;justify-content:space-between">原文证据 <span>ESC</span></div>
+                <div class="m fill" style="height:38px"></div>
+                <div class="m" style="height:38px"></div>
+                <div class="m fill" style="height:38px"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="state-box">
+          <div class="hd"><b>样本不足 · 不硬编阶段</b><span>少于 200 条或不足 30 天</span></div>
+          <div class="state-canvas">
+            <div class="empty">
+              <div class="ic">!</div>
+              <b>这段关系的数据还不够生成阶段</b>
+              <p>目前只有 86 条消息、跨度 12 天。仍可查看统计和原文，但不会划分阶段或给结论。</p>
+              <div class="btn">查看消息与统计</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:24px;padding:0 2px 30px">
+        <div class="anno" style="flex:1"><b>空状态</b>必须说明“数据已在本地”，避免用户以为没读到。</div>
+        <div class="anno" style="flex:1"><b>生成中</b>展示分块进度，可取消；完成后旧版本仍保留。</div>
+        <div class="anno" style="flex:1"><b>证据抽屉</b>覆盖在页面上，不打断时间线阅读位置。</div>
+        <div class="anno" style="flex:1"><b>样本不足</b>只给统计，不生成语义结论，避免过度推断。</div>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<script>
+  const box = document.getElementById('scalebox');
+  const frames = [...document.querySelectorAll('.frame')];
+  const buttons = [...document.querySelectorAll('.tabs button')];
+
+  function fit() {
+    const w = box.clientWidth;
+    const s = Math.min(1, w / 1280);
+    const active = frames.find((f) => f.classList.contains('active'));
+    frames.forEach((f) => { f.style.transform = `scale(${s})`; });
+    if (active) box.style.height = `${active.offsetHeight * s}px`;
+  }
+
+  function select(name) {
+    frames.forEach((f) => f.classList.toggle('active', f.id === `frame-${name}`));
+    buttons.forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === name)));
+    fit();
+  }
+
+  buttons.forEach((b) => b.addEventListener('click', () => select(b.dataset.tab)));
+  window.addEventListener('resize', fit);
+  fit();
+</script>
+</body>
+</html>

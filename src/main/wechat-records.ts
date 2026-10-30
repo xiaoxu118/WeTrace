@@ -1,0 +1,359 @@
+import { reportSelectionKey, validateReportSelection } from '../shared/report-selection'
+import type { ReportParticipant } from '../shared/report-facts'
+import { ChatIndex } from './chat-index'
+import type { ChatIndexSearchMatch, ChatIndexAction, ChatIndexStatus } from '../shared/chat-index'
+import { ReportDiskIndex } from './report-disk-index'
+import { sourceFingerprint } from './speech-index'
+import { createHash } from 'node:crypto'
+import { ReportRecordCache } from './report-record-cache'
+import { findSilentMembers } from '../shared/speech-stats'
+import type { ConversationIndexSummary, SpeechStatsQuery, SpeechStatsResult } from '../shared/types'
+import { reportContentType, reportDateTimestamp } from '../shared/report-messages'
+import { localImages, presentMessage } from './message-content'
+import { Wcdb4Client, type WcdbMessage } from './wcdb4-client'
+import type { ReportContentType, ReportMessagesFilter, ReportMessagesResult, SyncConversation, SyncMessage, SyncResult, WechatAccount } from '../shared/types'
+
+const MAX_CONVERSATIONS = 120
+const MESSAGE_PAGE_SIZE = 60
+const REPORT_PAGE_SIZE = 500
+const reportContentTypes: ReportContentType[] = ['message', 'voice', 'image', 'video']
+const syncClients = new Map<string, { key: string; client: Wcdb4Client }>()
+
+function recordsClient(account: WechatAccount, key: string): Wcdb4Client {
+  const cached = syncClients.get(account.root)
+  const client = cached?.key === key ? cached.client : new Wcdb4Client(key, account.root)
+  if (!cached || cached.key !== key) syncClients.set(account.root, { key, client })
+  return client
+}
+
+const chatIndexes = new Map<string, ChatIndex>()
+function chatIndex(directory: string, account: WechatAccount, key: string): ChatIndex {
+  const identity = createHash('sha256').update(JSON.stringify([directory, account.root, key])).digest('hex')
+  let index = chatIndexes.get(identity)
+  if (!index) { index = new ChatIndex(directory, account.root, key, account.wxid); chatIndexes.set(identity, index) }
+  return index
+}
+
+export function controlWechatChatIndex(directory: string, account: WechatAccount, key: string, action: ChatIndexAction): ChatIndexStatus {
+  const index = chatIndex(directory, account, key)
+  if (action === 'pause') return index.pause()
+  if (action === 'start' || action === 'rebuild' || action === 'sync' && index.status().state !== 'paused') {
+    void index.start({ ...recordsClient(account, key).indexSource(), fingerprint: () => sourceFingerprint(account.root) }, action === 'rebuild').catch(error => console.error('聊天索引更新失败:', error instanceof Error ? error.message : String(error)))
+  }
+  return index.status()
+}
+
+function clock(seconds: number): string {
+  const date = new Date(seconds * 1000)
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+}
+
+function dayLabel(seconds: number): string {
+  const date = new Date(seconds * 1000)
+  return `${date.getFullYear()} 年 ${date.getMonth() + 1} 月 ${date.getDate()} 日`
+}
+
+function monthLabel(seconds: number): string {
+  const date = new Date(seconds * 1000)
+  return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, '0')}`
+}
+
+export function syncWechatRecords(account: WechatAccount, key: string, indexDirectory?: string): SyncResult {
+  const client = recordsClient(account, key)
+  const sessions = client
+    .getSessions()
+    .sort((left, right) => right.lastActive - left.lastActive)
+  const profile = client.getSelfProfile()
+  const index = indexDirectory ? chatIndex(indexDirectory, account, key) : undefined
+  const useIndexedMessages = index?.isFresh(sourceFingerprint(account.root)) ?? false
+
+  const conversations: SyncConversation[] = []
+  const profileUsernames = new Set<string>()
+  let messageTotal = 0
+
+  for (const session of sessions) {
+    if (conversations.length >= MAX_CONVERSATIONS) break
+    const username = session.username
+    if (!username || username === 'filehelper') continue
+
+    let rows
+    try {
+      rows = useIndexedMessages && index?.hasConversation(username) ? index.messages(username, 0, undefined, MESSAGE_PAGE_SIZE) : client.getMessages(username, MESSAGE_PAGE_SIZE)
+    } catch {
+      continue
+    }
+    if (!rows.length) continue
+
+    profileUsernames.add(username)
+    const isGroup = username.endsWith('@chatroom')
+    const images = localImages(account.root, username)
+    const messages: SyncMessage[] = rows.map((row) => {
+      const mine = row.isSend || row.sender === account.wxid
+      if (isGroup && !mine && row.sender) profileUsernames.add(row.sender)
+      return {
+        id: row.id,
+        createdAt: row.createTime * 1000,
+        messageType: row.type,
+        from: mine ? 'me' : 'them',
+        senderId: isGroup ? (mine ? account.wxid : row.sender || undefined) : undefined,
+        sender: isGroup && !mine ? row.sender || undefined : undefined,
+        ...presentMessage(row.type, row.content, images, row.imageFileHash),
+        time: clock(row.createTime),
+      }
+    })
+    const first = rows[0]
+    const last = rows[rows.length - 1]
+
+    conversations.push({
+      id: username,
+      name: session.nickname || username,
+      type: isGroup ? 'group' : username.startsWith('gh_') || ['brandsessionholder', 'notification_messages', 'newsapp', 'weixin', 'officialaccounts'].includes(username) ? 'official' : 'friend',
+      time: clock(session.lastActive || last.createTime),
+      preview: messages[messages.length - 1]?.text ?? '',
+      unread: session.unreadCount || undefined,
+      records: rows.length.toLocaleString('en-US'),
+      range: `${monthLabel(first.createTime)} — ${monthLabel(last.createTime)}`,
+      day: dayLabel(last.createTime),
+      messages,
+    })
+    messageTotal += rows.length
+  }
+
+  if (!conversations.length) {
+    throw new Error('数据库已解密，但没有找到可读取的会话消息')
+  }
+
+  const profiles = client.getProfiles([...profileUsernames])
+  for (const conversation of conversations) {
+    const conversationProfile = profiles.get(conversation.id)
+    conversation.name = conversationProfile?.nickname || conversation.name
+    conversation.avatar = conversationProfile?.avatar
+    const groupNames = conversation.type === 'group' ? client.getGroupNicknames(conversation.id) : new Map<string, string>()
+    for (const message of conversation.messages) {
+      const senderId = message.senderId ?? message.sender
+      if (!senderId) continue
+      const senderProfile = profiles.get(senderId)
+      message.avatar = senderProfile?.avatar
+      message.sender = groupNames.get(senderId) || senderProfile?.nickname || message.sender
+    }
+  }
+
+  return {
+    account: {
+      ...account,
+      nickname: profile.nickname || account.wxid,
+      avatar: profile.avatar,
+    },
+    conversations,
+    messageTotal,
+    syncedAt: new Date().toISOString(),
+  }
+}
+
+function readWechatReportMessages(
+  account: WechatAccount,
+  key: string,
+  query: ReportMessagesFilter,
+  indexDirectory?: string
+): ReportMessagesResult {
+  const conversationId = typeof query.conversationId === 'string' ? query.conversationId.trim() : ''
+  if (!conversationId) throw new Error('请选择要生成报告的会话')
+  if (!Array.isArray(query.contentTypes) || query.contentTypes.some(type => !reportContentTypes.includes(type))) {
+    throw new Error('报告内容类型无效')
+  }
+  const selectedTypes = new Set(query.contentTypes)
+  if (!selectedTypes.size) throw new Error('请至少选择一种报告内容类型')
+
+  const startAt = reportDateTimestamp(query.startDate)
+  const endAt = reportDateTimestamp(query.endDate, true)
+  if (startAt >= endAt) throw new Error('报告开始日期不能晚于结束日期')
+
+  const client = recordsClient(account, key)
+  const counts: Record<ReportContentType, number> = { message: 0, voice: 0, image: 0, video: 0 }
+  const selectedRows: WcdbMessage[] = []
+  let offset = 0
+
+  const index = indexDirectory ? chatIndex(indexDirectory, account, key) : undefined
+  if (query.selectedMessages) validateReportSelection(query.selectedMessages)
+  if (index?.hasConversation(conversationId) && query.selectedMessages) {
+    selectedRows.push(...index.selectedReportMessages(conversationId, query.selectedMessages))
+    for (const row of selectedRows) counts[reportContentType(row.type)]++
+  } else if (index?.hasConversation(conversationId)) {
+    const content = index.reportContent(conversationId, startAt, endAt, query.contentTypes, query.indexRevision)
+    Object.assign(counts, content.counts)
+    selectedRows.push(...content.rows)
+  } else {
+  if (query.indexRevision) throw new Error('会话索引尚未完成，请等待索引就绪后重新选择会话')
+  while (true) {
+    const rows = client.getMessages(conversationId, REPORT_PAGE_SIZE, offset)
+    if (!rows.length) break
+    let reachedStart = false
+    for (const row of rows) {
+      const createdAt = row.createTime * 1000
+      if (createdAt < startAt) {
+        reachedStart = true
+        continue
+      }
+      if (createdAt >= endAt) continue
+      const contentType = reportContentType(row.type)
+      counts[contentType] += 1
+      if (selectedTypes.has(contentType)) selectedRows.push(row)
+    }
+    offset += rows.length
+    if (rows.length < REPORT_PAGE_SIZE || reachedStart) break
+  }
+  }
+
+  if (query.selectedMessages) {
+    const selected = new Set(query.selectedMessages.map(item => reportSelectionKey({ id: item.id, createdAt: item.createdAt })))
+    const kept = selectedRows.filter(row => selected.has(reportSelectionKey({ id: row.id, createdAt: row.createTime * 1000 })))
+    selectedRows.splice(0, selectedRows.length, ...kept)
+  }
+  selectedRows.sort((left, right) => left.createTime - right.createTime)
+  const isGroup = conversationId.endsWith('@chatroom')
+  const images = query.deferMedia ? new Map<string, string[]>() : localImages(account.root, conversationId)
+  const profileUsernames = new Set<string>([account.wxid])
+  const messages: SyncMessage[] = selectedRows.map(row => {
+    const mine = row.isSend || row.sender === account.wxid
+    if (isGroup && !mine && row.sender) profileUsernames.add(row.sender)
+    return {
+      id: row.id,
+      createdAt: row.createTime * 1000,
+      messageType: row.type,
+      from: mine ? 'me' : 'them',
+      senderId: mine ? account.wxid : isGroup ? row.sender || undefined : conversationId,
+      sender: isGroup && !mine ? row.sender || undefined : undefined,
+      ...(query.deferMedia && [3, 34].includes(row.type)
+        ? { text: row.type === 3 ? '[图片]' : '[语音]', reportMedia: { content: row.content, serverId: row.serverId, imageFileHash: row.imageFileHash } }
+        : presentMessage(row.type, row.content, images, row.imageFileHash)),
+      ...(row.type === 34 && query.includeVoiceData && !query.deferMedia ? { voice: client.getVoiceData(conversationId, row) } : {}),
+      time: clock(row.createTime),
+    }
+  })
+
+  const names = client.getDisplayNames([...profileUsernames])
+  const groupNames = isGroup ? client.getGroupNicknames(conversationId) : new Map<string, string>()
+  for (const message of messages) {
+    const senderId = message.senderId ?? message.sender
+    if (!senderId) continue
+    message.sender = groupNames.get(senderId) || names.get(senderId) || message.sender
+  }
+
+  return {
+    conversationId,
+    startDate: query.startDate,
+    endDate: query.endDate,
+    contentTypes: reportContentTypes.filter(type => selectedTypes.has(type)),
+    messages,
+    counts,
+  }
+}
+
+export function queryWechatSpeechStats(directory: string, account: WechatAccount, key: string, query: SpeechStatsQuery): SpeechStatsResult {
+  const client = recordsClient(account, key)
+  if (!query.conversationId?.endsWith('@chatroom')) throw new Error('请选择群聊')
+  const start = query.startDate ? reportDateTimestamp(query.startDate) : 0
+  const end = query.endDate ? reportDateTimestamp(query.endDate, true) : 253402300800000
+  if (start >= end) throw new Error('开始日期不能晚于结束日期')
+  const index = chatIndex(directory, account, key)
+  const stats = index.hasConversation(query.conversationId) && index.isFresh(sourceFingerprint(account.root)) ? index.speech(query.conversationId, start, end)
+    : client.aggregateConversation(query.conversationId, { start, end, selfId: account.wxid }) as SpeechStatsResult
+  try {
+    stats.silentMembers = findSilentMembers(client.getGroupMemberIds(query.conversationId), stats.members)
+  } catch (error) {
+    stats.membershipError = error instanceof Error ? error.message : '读取群成员失败'
+  }
+  const names = client.getDisplayNames([...stats.members, ...(stats.silentMembers ?? [])].map(member => member.id).filter(Boolean))
+  const groupNames = client.getGroupNicknames(query.conversationId)
+  for (const member of [...stats.members, ...(stats.silentMembers ?? [])]) member.name = member.id === account.wxid ? '我' : groupNames.get(member.id) || names.get(member.id) || member.name
+  stats.silentMembers?.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
+  return stats
+}
+
+export function queryWechatConversationSummary(directory: string, account: WechatAccount, key: string, conversationId: string): ConversationIndexSummary {
+  const client = recordsClient(account, key)
+  const index = chatIndex(directory, account, key)
+  return index.hasConversation(conversationId) && index.isFresh(sourceFingerprint(account.root)) ? index.summary(conversationId) : client.aggregateConversation(conversationId) as ConversationIndexSummary
+}
+
+export function prepareWechatReportMedia(account: WechatAccount, key: string, conversationId: string, message: SyncMessage): SyncMessage {
+  const media = message.reportMedia
+  if (!media) return message
+  if (message.messageType === 34) {
+    const voice = recordsClient(account, key).getVoiceData(conversationId, { id: message.id, createTime: Math.floor(message.createdAt / 1000), type: 34, content: media.content, serverId: media.serverId, isSend: message.from === 'me', sender: message.senderId || '' })
+    return { ...message, voice }
+  }
+  if (message.messageType === 3) return { ...message, ...presentMessage(3, media.content, localImages(account.root, conversationId), media.imageFileHash) }
+  return message
+}
+
+const reportRecordCache = new ReportRecordCache()
+export function queryWechatReportMessages(account: WechatAccount, key: string, query: ReportMessagesFilter, indexDirectory?: string, chatDirectory?: string): ReportMessagesResult {
+  if (query.metadataOnly) {
+    if (!chatDirectory) throw new Error('聊天索引尚未连接')
+    const index = chatIndex(chatDirectory, account, key)
+    if (!index.hasConversation(query.conversationId)) throw new Error('该会话索引尚未完成，请在设置的缓存与索引页查看进度，完成后重新选择会话')
+    const start = reportDateTimestamp(query.startDate), end = reportDateTimestamp(query.endDate, true)
+    if (start >= end) throw new Error('报告开始日期不能晚于结束日期')
+    if (!Array.isArray(query.contentTypes) || query.contentTypes.some(type => !reportContentTypes.includes(type))) throw new Error('报告内容类型无效')
+    const selection = index.reportSelection(query.conversationId, start, end)
+    const rows = selection.rows
+    const client = recordsClient(account, key)
+    const ids = [...new Set(rows.map(row => row.sender).filter(Boolean))]
+    const names = client.getDisplayNames(ids)
+    const groupNames = query.conversationId.endsWith('@chatroom') ? client.getGroupNicknames(query.conversationId) : new Map<string, string>()
+    const counts: Record<ReportContentType, number> = { message: 0, voice: 0, image: 0, video: 0 }
+    const selected = new Set(query.contentTypes)
+    const messages: SyncMessage[] = []
+    for (const row of rows) {
+      const type = reportContentType(row.type)
+      counts[type] += row.count
+      if (!selected.has(type)) continue
+      messages.push({ id: row.id, createdAt: row.time, count: row.count, messageType: row.type, from: row.sender === account.wxid ? 'me' : 'them', senderId: row.sender || undefined, sender: groupNames.get(row.sender) || names.get(row.sender) || row.sender || undefined, text: '', time: '' })
+    }
+    return { ...query, counts, messages, indexRevision: selection.revision }
+  }
+  if (chatDirectory && chatIndex(chatDirectory, account, key).hasConversation(query.conversationId)) return readWechatReportMessages(account, key, query, chatDirectory)
+  if (!query.deferMedia) return readWechatReportMessages(account, key, query, chatDirectory)
+  const identity = createHash('sha256').update(JSON.stringify(['report-v2-members', account.root, key, query])).digest('hex')
+  return reportRecordCache.get(identity, () => sourceFingerprint(account.root), () => {
+    const read = () => readWechatReportMessages(account, key, query, chatDirectory)
+    return indexDirectory ? new ReportDiskIndex(indexDirectory).get(account.root, key, identity, () => sourceFingerprint(account.root), read) : read()
+  })
+}
+
+export function searchWechatChatIndex(directory: string, account: WechatAccount, key: string, keyword: string): ChatIndexSearchMatch[] {
+  const found = chatIndex(directory, account, key).search(keyword)
+  const names = recordsClient(account, key).getDisplayNames(found.map(row => row.room))
+  return found.map(({ room, message }) => ({ conversationId: room, conversationName: names.get(room) || room, id: message.id, createdAt: message.createTime * 1000, text: presentMessage(message.type, message.content, new Map()).text }))
+}
+
+export function readIndexedConversation(directory: string, account: WechatAccount, key: string, conversationId: string, at?: number, limit = MESSAGE_PAGE_SIZE, refresh = false): SyncConversation {
+  const index = chatIndex(directory, account, key)
+  const client = recordsClient(account, key)
+  const indexed = !refresh && index.hasConversation(conversationId) && (at !== undefined || index.isFresh(sourceFingerprint(account.root)))
+  if (!indexed && at !== undefined) throw new Error('该会话索引尚未完成')
+  const rows = indexed ? index.messages(conversationId, 0, at === undefined ? undefined : at + 1, limit) : client.getMessages(conversationId, limit)
+  const names = client.getDisplayNames([conversationId, ...rows.map(row => row.sender)])
+  const groupNames = conversationId.endsWith('@chatroom') ? client.getGroupNicknames(conversationId) : new Map<string, string>()
+  const images = localImages(account.root, conversationId)
+  const messages: SyncMessage[] = rows.map(row => ({
+    id: row.id, createdAt: row.createTime * 1000, messageType: row.type,
+    from: row.isSend || row.sender === account.wxid ? 'me' : 'them',
+    senderId: row.isSend ? account.wxid : row.sender,
+    sender: groupNames.get(row.sender) || names.get(row.sender) || row.sender,
+    ...presentMessage(row.type, row.content, images, row.imageFileHash), time: clock(row.createTime),
+  }))
+  const summary = indexed ? index.summary(conversationId) : client.aggregateConversation(conversationId) as ConversationIndexSummary
+  return { id: conversationId, name: names.get(conversationId) || conversationId,
+    type: conversationId.endsWith('@chatroom') ? 'group' : conversationId.startsWith('gh_') ? 'official' : 'friend',
+    time: rows.length ? clock(rows[rows.length - 1].createTime) : '', preview: messages[messages.length - 1]?.text || '',
+    records: summary.total.toLocaleString('en-US'), range: summary.firstAt === null ? '' : `${monthLabel(summary.firstAt / 1000)} — ${monthLabel(summary.lastAt! / 1000)}`,
+    day: rows.length ? dayLabel(rows[rows.length - 1].createTime) : '', messages }
+}
+
+export function loadReportParticipantProfiles(account: WechatAccount, key: string, participants: ReportParticipant[]): ReportParticipant[] {
+  const top = participants.slice(0, 5).map(member => ({ ...member, id: member.id || (member.key === 'self' ? account.wxid : undefined) }))
+  const profiles = recordsClient(account, key).getProfiles(top.flatMap(member => member.id ? [member.id] : []))
+  return top.map(member => ({ ...member, name: member.name && member.name !== '我' ? member.name : (member.id ? profiles.get(member.id)?.nickname || member.id : '未知成员'), avatar: member.id ? profiles.get(member.id)?.avatar || member.avatar : member.avatar }))
+}

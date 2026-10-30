@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>WeTrace · 技术 PRD</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  :root{
+    --bg:#f4f7fb; --bg-elev:#ffffff; --bg-card:#ffffff;
+    --fg:#1d2939; --fg-dim:#475467; --fg-mute:#667085;
+    --accent:#246bfd; --accent-2:#7357d9; --accent-3:#087f8c;
+    --warn:#b54708; --danger:#d92d20; --ok:#067647;
+    --line:#dce3ec; --code-bg:#eef3f9;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB",
+      "Microsoft YaHei","Segoe UI",sans-serif; line-height:1.65; font-size:15px;}
+  .wrap{max-width:980px;margin:0 auto;padding:48px 28px 96px}
+  header.doc{border-bottom:1px solid var(--line);padding-bottom:28px;margin-bottom:36px}
+  .brand{display:flex;align-items:center;gap:14px;margin-bottom:10px}
+  .logo{width:44px;height:44px;border-radius:12px;
+    background:linear-gradient(135deg,var(--accent),var(--accent-2));
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:20px;color:#fff}
+  h1{font-size:30px;margin:0;letter-spacing:.5px}
+  h1 .cn{color:var(--fg-dim);font-weight:500;font-size:22px;margin-left:10px}
+  .tagline{color:var(--fg-dim);font-size:16px;margin-top:6px}
+  .meta{display:flex;flex-wrap:wrap;gap:14px;margin-top:18px;font-size:13px;color:var(--fg-mute)}
+  .meta span b{color:var(--fg-dim);font-weight:500;margin-right:4px}
+  .pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;
+    border:1px solid var(--line);color:var(--fg-dim);background:var(--bg-elev)}
+  .pill.p0{border-color:rgba(91,157,255,.5);color:var(--accent)}
+  .pill.p1{border-color:rgba(139,92,246,.5);color:var(--accent-2)}
+  .pill.p2{border-color:rgba(107,114,128,.5);color:var(--fg-mute)}
+  .pill.assume{border-color:rgba(245,158,11,.5);color:var(--warn)}
+  .pill.tbd{border-color:rgba(239,68,68,.5);color:var(--danger)}
+
+  h2{font-size:22px;margin:42px 0 14px;padding-top:14px;border-top:1px solid var(--line)}
+  h2 .num{color:var(--accent);margin-right:8px;font-weight:600}
+  h3{font-size:17px;margin:26px 0 10px;color:var(--fg)}
+  h4{font-size:15px;margin:18px 0 8px;color:var(--fg-dim)}
+  p{margin:10px 0}
+  ul,ol{margin:8px 0 12px;padding-left:22px}
+  li{margin:4px 0}
+  code{background:var(--code-bg);padding:1px 6px;border-radius:4px;
+    font-family:"SF Mono",Menlo,Consolas,monospace;font-size:13px;color:#344054}
+  pre{background:var(--code-bg);border:1px solid var(--line);border-radius:8px;
+    padding:14px 16px;overflow-x:auto;font-size:13px;line-height:1.55}
+  pre code{background:transparent;padding:0;color:#24324a}
+  table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:var(--bg-card);font-weight:600;color:var(--fg)}
+  td{color:var(--fg-dim)}
+  td b{color:var(--fg)}
+  .callout{border-left:3px solid var(--accent);background:var(--bg-elev);
+    padding:10px 14px;border-radius:0 6px 6px 0;margin:14px 0;font-size:14px}
+  .callout.warn{border-color:var(--warn)}
+  .callout.danger{border-color:var(--danger)}
+  .callout.ok{border-color:var(--ok)}
+  .grid{display:grid;gap:14px;margin:14px 0}
+  .grid.c2{grid-template-columns:1fr 1fr}
+  .grid.c3{grid-template-columns:1fr 1fr 1fr}
+  .card{background:var(--bg-card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .card h4{margin-top:0}
+  .flow{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:12px 0;font-size:13px}
+  .flow .step{background:var(--bg-card);border:1px solid var(--line);
+    padding:6px 12px;border-radius:6px;color:var(--fg)}
+  .flow .arr{color:var(--fg-mute)}
+  .req-id{display:inline-block;background:rgba(91,157,255,.12);color:var(--accent);
+    padding:1px 8px;border-radius:4px;font-size:12px;font-weight:600;
+    font-family:Menlo,monospace;margin-right:6px}
+  .kv{font-size:13px;color:var(--fg-mute)}
+  .kv b{color:var(--fg-dim)}
+  footer.doc{margin-top:60px;padding-top:20px;border-top:1px solid var(--line);
+    font-size:12px;color:var(--fg-mute);text-align:center}
+  .toc{background:var(--bg-elev);border:1px solid var(--line);border-radius:8px;
+    padding:14px 20px;font-size:14px}
+  .toc ol{margin:0;padding-left:20px}
+  .toc a{color:var(--fg-dim);text-decoration:none}
+  .toc a:hover{color:var(--accent)}
+  @media(max-width:720px){.grid.c2,.grid.c3{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="doc">
+  <div class="brand">
+    <div class="logo">W</div>
+    <div>
+      <h1>WeTrace</h1>
+      <div class="tagline">本地消息追踪</div>
+    </div>
+  </div>
+  <div class="meta">
+    <span><b>版本</b>v1.1（连接、消息交互与视觉补充）</span>
+    <span><b>类型</b>技术 PRD · 产品需求与工程设计</span>
+    <span><b>参考项目</b>TraceMemo（迹忆）</span>
+    <span><b>形态</b>macOS / Windows 桌面应用</span>
+    <span><b>数据</b>本地优先 · 微信</span>
+    <span><b>日期</b>2026-10-29</span>
+  </div>
+</header>
+
+<nav class="toc">
+  <ol>
+    <li><a href="#s1">背景与目标</a></li>
+    <li><a href="#s2">产品契约与核心用户</a></li>
+    <li><a href="#s3">范围（P0 / P1 / 不做）</a></li>
+    <li><a href="#s4">核心用户旅程</a></li>
+    <li><a href="#s5">功能需求</a></li>
+    <li><a href="#s6">共享规则与对象模型</a></li>
+    <li><a href="#s7">隐私、权限与异常</a></li>
+    <li><a href="#s8">技术方案</a></li>
+    <li><a href="#s9">决策记录与遗留风险</a></li>
+  </ol>
+</nav>
+
+<!-- ============ 1 ============ -->
+<h2 id="s1"><span class="num">1</span>背景与目标</h2>
+
+<h3>1.1 需要解决的问题</h3>
+<p>微信消息持续增长，跨时间查找、回看和整理的成本越来越高。用户需要一个本地工具持续追踪已经同步的消息，并能按会话、时间和关键词找到原文。</p>
+
+<h3>1.2 产品决策</h3>
+<p>做一个<b>本地优先的消息追踪工具</b>。当前主线是“连接微信 → 同步消息 → 查看会话 → 搜索与日期定位 → 生成消息总结”，首先把消息接入、浏览、追踪和回顾做完整。</p>
+
+<h3>1.3 目标</h3>
+<ul>
+  <li>用户能连接本地微信并增量同步联系人、私聊、群聊和消息，重复同步不产生重复消息。</li>
+  <li>用户能通过会话列表和聊天窗查看私聊与群聊记录，并按关键词或日期定位本地消息。</li>
+  <li>用户能按日度、月度、年度生成会话总结，也能提取当前微信本人全年在私聊和群聊中发送的消息，生成个人年度总结并回跳原文。</li>
+  <li>取钥开库后，消息浏览、同步、总结和导出不依赖微信持续运行。</li>
+  <li>原始聊天数据保存在本机；只有用户主动使用 AI 功能时，才向其配置的 Provider 发送当前任务所需的数据。</li>
+</ul>
+
+<h3>1.4 首版完成标准</h3>
+<ul>
+  <li>用户能够从首次连接进入会话列表，并打开私聊或群聊聊天窗查看已同步记录。</li>
+  <li>消息搜索、日期定位、同步和原文回跳可用，加载、空数据与失败状态均有明确反馈。</li>
+  <li>会话总结与个人年度总结均使用明确的自然周期和本地数据范围；个人年度总结只包含本人发送的消息，无消息时不调用 AI。</li>
+  <li>同步重跑无重复消息，微信退出后仍可读取本地数据，历史消息与已保存总结不因任务失败丢失。</li>
+</ul>
+
+<!-- ============ 2 ============ -->
+<h2 id="s2"><span class="num">2</span>产品契约与核心用户</h2>
+
+<table>
+  <tr><th>项</th><th>内容</th></tr>
+  <tr><td><b>主要用户</b></td><td>需要在本地持续追踪、查找和回顾微信消息的个人用户</td></tr>
+  <tr><td><b>核心任务 (JTBD)</b></td><td>“我想把微信私聊和群聊同步到本地，按会话和时间找回记录，并用自己全年发送的消息生成可追溯原文的年度总结”</td></tr>
+  <tr><td><b>触发</b></td><td>用户连接本地微信 → 同步消息 → 查看会话、生成会话总结或提取本人消息生成年度总结</td></tr>
+  <tr><td><b>完成条件</b></td><td>用户能浏览与定位私聊和群聊消息，并保存或导出会话周期总结与个人年度总结</td></tr>
+  <tr><td><b>核心对象</b></td><td>Person（人物，含当前本人）、Conversation（私聊 / 群聊）、Message（消息）、Report（消息总结）、Relationship（关系）、Chapter（关系阶段）、Moment（关键时刻）、Change（变化观察）、Automation（自动化规则，P1）</td></tr>
+  <tr><td><b>信任基线</b></td><td>明确区分原始消息、本地统计和 AI 总结；AI 生成的总结必须能回跳原文，不把推断表述为确定事实</td></tr>
+  <tr><td><b>术语约定</b></td><td>本文“登录”指用户在微信客户端登录，WeTrace 不设独立账号；“连接成功”指微信密钥验证通过且本地数据库可以只读打开</td></tr>
+</table>
+
+<h3>2.1 三类内容，永不混写</h3>
+<table>
+  <tr><th>类型</th><th>来源</th><th>展示方式</th></tr>
+  <tr><td><b>关系事实</b></td><td>用户手动确认，例如“我们于某天在一起”</td><td>显示“我确认的”，可编辑、删除</td></tr>
+  <tr><td><b>互动统计</b></td><td>本地消息计算，例如双方发言数、主动发起率、回复间隔</td><td>显示计算口径、时间窗和缺失数据情况</td></tr>
+  <tr><td><b>变化观察</b></td><td>AI 基于聊天样本生成，例如“这段时间称呼变得更亲密”</td><td>显示“AI 观察”及原文证据，允许用户否定</td></tr>
+</table>
+
+<!-- ============ 3 ============ -->
+<h2 id="s3"><span class="num">3</span>范围</h2>
+
+<h3>3.1 P0（首版必交付）</h3>
+<table>
+  <tr><th>ID</th><th>能力</th><th>说明</th></tr>
+  <tr><td>FR-00</td><td>应用外壳与消息浏览</td><td>明亮桌面界面、左侧导航与本人头像、私聊 / 群聊会话列表、聊天窗及顶部工具按钮</td></tr>
+  <tr><td>FR-01</td><td>微信本地数据接入</td><td>通过 60 秒登录窗口获取并验证密钥，增量同步联系人、私聊、群聊和消息；取钥后无需保持微信运行</td></tr>
+  <tr><td>FR-02</td><td>关系档案</td><td>从私聊创建“我 + TA”的关系，支持朋友、恋人、前恋人、未分类等用户标签</td></tr>
+  <tr><td>FR-03</td><td><b>关系时间线</b>（核心）</td><td>按时间生成阶段与关键时刻，原文可回跳，用户可编辑和确认</td></tr>
+  <tr><td>FR-04</td><td><b>双方变化回顾</b>（核心）</td><td>对任意两个时段，对比双方及互动的变化，区分统计与 AI 观察</td></tr>
+  <tr><td>FR-05</td><td><b>消息总结</b>（会话 + 个人年度）</td><td>私聊 / 群聊支持日度、月度、年度总结；个人年度总结提取当前本人全年在全部会话中发送的消息，包含本地统计、主要话题和原文依据</td></tr>
+  <tr><td>FR-06</td><td>AI 模型配置</td><td>支持 OpenAI-compatible Provider，用户自带 API Key</td></tr>
+  <tr><td>FR-07</td><td>本地存储与导出</td><td>消息、关系档案、消息总结均存本机；支持 HTML / Markdown / PNG</td></tr>
+</table>
+
+<h3>3.2 P1（紧随其后的增强）</h3>
+<table>
+  <tr><th>ID</th><th>能力</th><th>说明</th></tr>
+  <tr><td>FR-08</td><td>自动化</td><td>定时同步并生成消息总结或更新变化观察，保存执行历史（接口与调度设计已在 8.9 预留）</td></tr>
+  <tr><td>FR-09</td><td>共同群聊上下文</td><td>在用户明确选择后，将双方在共同群里的公开互动补充到关系时间线</td></tr>
+  <tr><td>FR-10</td><td>纪念日与回忆</td><td>基于用户确认的关键日期生成纪念日提醒和回忆整理</td></tr>
+  <tr><td>FR-11</td><td>本地知识库 + 问问关系</td><td>自然语言查询“我们第一次提到旅行是什么时候”并返回原文</td></tr>
+  <tr><td>FR-12</td><td>个人叙事手册</td><td>将确认后的时间线整理为可长期保存的关系故事</td></tr>
+  <tr><td>FR-13</td><td>自动化外部通知</td><td>通过邮件 / Webhook 推送不含原文的任务摘要</td></tr>
+</table>
+
+<h3>3.3 明确不做（首版）</h3>
+<ul>
+  <li>不根据聊天自动判定“已经恋爱”“已经分手”“不爱了”或任何单方面的关系事实。</li>
+  <li>不做忠诚、出轨、欺骗、心理疾病等敏感推断，不做分手预测或挽回评分。</li>
+  <li>不做隐蔽监控、机器人、云端账号或多端同步；P0 不提供消息发送。若后续加入发送能力，只有发送动作需要微信进程运行。</li>
+  <li>消息追踪、会话总结和个人年度总结覆盖私聊与群聊；关系分析仍只针对双人私聊，其他 IM 留到后续。</li>
+  <li>不产出单人人格画像、群成员画像矩阵或任何关系评分。</li>
+</ul>
+
+<!-- ============ 4 ============ -->
+<h2 id="s4"><span class="num">4</span>核心用户旅程</h2>
+
+<h3>4.1 首次连接：60 秒登录取钥</h3>
+<div class="callout warn">
+  <b>前置条件</b>：微信必须停在“未登录窗口”。用户需要在微信内退出账号；只关闭微信窗口不符合条件。WeTrace 不代替用户退出账号或点击登录。
+</div>
+<div class="flow">
+  <span class="step">定位微信进程 PID</span><span class="arr">→</span>
+  <span class="step">按平台建立读取能力</span><span class="arr">→</span>
+  <span class="step">开启 60 秒抓取窗口</span><span class="arr">→</span>
+  <span class="step">用户点击微信登录</span><span class="arr">→</span>
+  <span class="step">读取 Key 并立即验证</span><span class="arr">→</span>
+  <span class="step">加密落盘并只读开库</span>
+</div>
+<p>抓取窗口打开后，界面显示“现在可以去点登录了”和剩余秒数。数据库成功打开后，用户可以关闭微信；消息浏览、同步、分析和导出不依赖微信进程持续运行。</p>
+
+<h3>4.2 主流程：建立一段关系的时间线</h3>
+<div class="flow">
+  <span class="step">连接微信并同步</span><span class="arr">→</span>
+  <span class="step">选择私聊对象</span><span class="arr">→</span>
+  <span class="step">创建关系档案</span><span class="arr">→</span>
+  <span class="step">生成时间线</span><span class="arr">→</span>
+  <span class="step">查看双方变化</span><span class="arr">→</span>
+  <span class="step">确认 / 修改关键时刻</span><span class="arr">→</span>
+  <span class="step">保存或导出</span>
+</div>
+
+<h3>4.3 生成消息总结</h3>
+<div class="flow">
+  <span class="step">选择会话总结 / 我的年度总结</span><span class="arr">→</span>
+  <span class="step">选择周期</span><span class="arr">→</span>
+  <span class="step">提取本地消息</span><span class="arr">→</span>
+  <span class="step">生成统计与主要话题</span><span class="arr">→</span>
+  <span class="step">回跳原文或保存导出</span>
+</div>
+
+<h3>4.4 消息浏览与原文回跳</h3>
+<div class="flow">
+  <span class="step">点击左侧「消息」</span><span class="arr">→</span>
+  <span class="step">选择会话</span><span class="arr">→</span>
+  <span class="step">查看私聊 / 群聊记录</span><span class="arr">→</span>
+  <span class="step">搜索 / 日期定位 / 同步</span><span class="arr">→</span>
+  <span class="step">私聊可创建或查看关系档案</span>
+</div>
+<p>从时间线、变化观察或消息总结点击证据时，也进入同一聊天窗，定位并高亮对应原文。</p>
+
+<h3>4.5 异常与边界</h3>
+<ul>
+  <li>微信仍处于已登录状态 → 不启动 60 秒窗口，引导用户退出账号并重新检测。</li>
+  <li>抓取超时、用户取消或进程退出 → 清理本次读取能力，保留旧数据与旧密钥，可重新发起。</li>
+  <li>历史消息不完整 → 时间线起点标为“本地记录起点”，不得写成“相识日期”。</li>
+  <li>样本不足 → 仅展示消息与基础统计，不强行划分关系阶段。</li>
+  <li>长期无消息 → 显示“该时段无本地消息”，不直接推断为冷战或疏远。</li>
+  <li>LLM 失败 → 保留已同步消息和统计，可重试 AI 部分；用户已确认内容不受影响。</li>
+</ul>
+
+<!-- ============ 5 ============ -->
+<h2 id="s5"><span class="num">5</span>功能需求</h2>
+
+<!-- FR-00 -->
+<h3><span class="req-id">FR-00</span>应用外壳与消息浏览</h3>
+
+<h4>A. 整体布局与视觉</h4>
+<pre><code>┌──────────┬───────────────────┬─────────────────────────────────┐
+│ 消息     │ 搜索会话          │ 会话名称    搜索 日期 同步 关系 │
+│ 关系     ├───────────────────┼─────────────────────────────────┤
+│ 总结     │ 私聊 / 群聊列表   │ 日期分隔 / 聊天记录             │
+│ 设置     │ 头像 名称 预览    │ 他人在左，本人在右              │
+│          │                   │                                 │
+│ 本人头像 │                   │ 只读状态 / 当前会话同步状态     │
+└──────────┴───────────────────┴─────────────────────────────────┘</code></pre>
+<ul>
+  <li><b>默认明亮主题</b>：使用浅灰白页面背景、白色内容面板、深灰主文字和蓝色主操作色；不得使用大面积纯黑或深海军蓝背景。P0 不要求暗色模式。</li>
+  <li><b>层级与气泡</b>：以细边框和轻阴影区分区域；对方消息使用白色或浅灰气泡，本人消息使用浅蓝气泡，AI 观察和警示色不得与消息方向混淆。</li>
+  <li><b>可用性</b>：正文与背景对比度至少 4.5:1；图标按钮具有文字提示、键盘焦点和禁用状态，不能只靠颜色表达连接或任务状态。</li>
+</ul>
+
+<h4>B. 左侧导航与本人入口</h4>
+<div class="card">
+  <p><b>触发</b>：首次连接并完成同步后进入应用外壳，默认选中「消息」；之后启动时优先恢复上次选中的导航和会话。</p>
+  <p><b>规则</b>：左侧导航至少包含「消息 / 关系 / 总结 / 设置」。左下角固定显示当前微信本人的头像；头像读取失败时显示昵称首字占位，不显示破图。点击头像打开账号浮层，展示本人昵称、连接状态、最近同步时间，以及「重新获取密钥」和「数据库与账号设置」入口。</p>
+  <p><b>结果</b>：点击「消息」始终回到会话列表；切换导航不丢失正在查看的会话。账号浮层不展示完整密钥或完整 wxid。</p>
+</div>
+
+<h4>C. 会话列表与聊天窗（私聊 / 群聊）</h4>
+<ul>
+  <li><b>会话列表</b>：同时展示私聊和群聊，按最近一条本地消息时间倒序；每行显示会话头像、会话名称、类型标识、最近消息预览和消息时间。私聊显示名备注优先于昵称，群聊使用群名称；顶部搜索仅查询本地会话名称与备注，不调用 LLM。</li>
+  <li><b>进入聊天</b>：点击会话后，在右侧打开聊天窗；正文按发送时间正序展示，以日期分隔，本人消息在右，其他发送者消息在左。群聊中他人的消息须显示发送者头像与显示名，不能只按左右位置判断发送者。</li>
+  <li><b>初始位置与分页</b>：首次进入默认定位到最新消息；向上滚动按 50 条加载历史，加载期间保留当前滚动位置。从证据进入时改为定位目标消息并高亮，同时加载足够上下文。</li>
+  <li><b>消息类型</b>：文本直接展示；图片、语音、文件等未解析内容显示对应类型、发送方向和发送时间，不臆测正文。P0 聊天区只读，不显示发送输入框。</li>
+  <li><b>本地可用性</b>：已同步会话和消息在微信退出后仍可查看；网络断开不影响本地浏览、搜索和日期定位。</li>
+</ul>
+
+<h4>D. 聊天窗顶部工具按钮</h4>
+<table>
+  <tr><th>按钮</th><th>行为</th><th>状态 / 异常</th></tr>
+  <tr><td><b>搜索</b></td><td>在当前会话本地消息中搜索，展示结果数并支持上一条 / 下一条定位与原文高亮</td><td>无结果显示“未找到相关消息”；关闭搜索后返回进入前的位置</td></tr>
+  <tr><td><b>日期</b></td><td>打开日期选择器并跳到当天首条本地消息</td><td>当日无消息时明确提示，并提供最近有消息的日期，不静默跳转</td></tr>
+  <tr><td><b>同步</b></td><td>同步当前账号的增量数据，完成后刷新当前会话和最近同步时间</td><td>同步中禁用重复触发；失败保留当前消息和阅读位置，并允许重试</td></tr>
+  <tr><td><b>关系档案</b></td><td>私聊未创建时进入「创建关系档案」确认流程；已创建时直接打开对应档案</td><td>群聊中禁用并提示“仅支持私聊”；身份映射不明确时先要求用户确认，不自动创建或合并</td></tr>
+</table>
+
+<h4>E. 页面状态</h4>
+<table>
+  <tr><th>状态</th><th>界面反馈与可执行动作</th></tr>
+  <tr><td>首次无数据</td><td>会话区显示连接 / 同步引导，不渲染虚假的会话或消息</td></tr>
+  <tr><td>加载中</td><td>列表和聊天区分别显示骨架或进度，不同步阻塞左侧导航</td></tr>
+  <tr><td>空搜索 / 空会话</td><td>区分“没有匹配结果”和“尚未同步消息”，分别提供清空搜索或开始同步</td></tr>
+  <tr><td>读取失败</td><td>保留已成功加载的本地数据，显示可理解原因和重试入口；不得清空当前选中会话</td></tr>
+  <tr><td>证据消息不存在</td><td>仍打开对应会话并提示“本地未找到该条原文”，允许返回来源结论，不伪造跳转位置</td></tr>
+</table>
+
+<!-- FR-01 -->
+<h3><span class="req-id">FR-01</span>微信本地数据接入</h3>
+<div class="card">
+  <p><b>触发</b>：首次启动、已保存 Key 失效、用户从本人头像或设置中点击「重新获取密钥」，以及手动同步（P1 起可由自动化规则触发同步，但不自动发起取钥）。</p>
+  <p><b>规则</b>：探测或手动选择本机微信数据目录；优先验证已保存 Key，不可用时才进入 60 秒登录取钥。验证通过后，以只读方式解密并增量同步联系人、私聊、群聊、群成员和消息；标准化会话类型与发送者身份，并确认当前微信本人映射。每批消息与游标同事务提交。</p>
+  <p><b>结果</b>：显示连接状态、当前本人账号、私聊与群聊数量、消息数、最近同步时间和本地记录覆盖范围；不修改或写回微信原库。</p>
+</div>
+
+<h4>A. 60 秒登录取钥流程</h4>
+<ol>
+  <li><b>前置检测</b>：确认微信已启动且停在“未登录窗口”。检测到已登录账号时，提示用户先在微信内退出账号；只关闭窗口不能通过检测。</li>
+  <li><b>定位进程</b>：定位当前微信进程 PID，并绑定本次抓取任务。找不到进程、发现多个无法确认的实例或进程中途退出时，不进入倒计时。</li>
+  <li><b>建立读取能力</b>：说明所需系统权限，经用户明确授权后，按 macOS / Windows 分别建立最小范围的进程读取能力。授权准备时间不计入 60 秒。</li>
+  <li><b>开启抓取窗口</b>：读取能力就绪后才开始 60 秒倒计时，UI 显示“现在可以去点登录了”、剩余秒数和「取消」。用户自行回到微信点击登录，应用不自动操作微信。</li>
+  <li><b>读取并立即验证</b>：只在本次登录派生 Key 时读取所需密钥材料；取得候选 Key 后立即尝试只读打开目标数据库并读取最小元数据，格式匹配不等于验证成功。</li>
+  <li><b>加密落盘并开库</b>：验证成功后加密保存 Key，再建立只读连接并进入同步。只有密钥保存和数据库连接均成功，状态才变为“已连接”；此后微信进程可以关闭。</li>
+</ol>
+
+<h4>B. 状态与恢复</h4>
+<pre><code>未连接 → 等待微信退出账号 → 准备读取能力 → 等待登录（60s）→ 验证中 → 已连接
+   ↑             ↓                  ↓               ↓          ↓
+   └─────────────┴──── 可取消 / 失败可重试 ─────────┴──── 需重新取钥</code></pre>
+<table>
+  <tr><th>情况</th><th>产品行为</th></tr>
+  <tr><td>微信未运行 / 已登录 / 实例不明确</td><td>阻止开始倒计时，分别提供“打开微信后重试”“退出账号后重新检测”“关闭多余实例”的明确指引</td></tr>
+  <tr><td>用户取消授权或抓取</td><td>立即结束本次任务并释放读取能力，不反复弹出授权，不修改已保存 Key</td></tr>
+  <tr><td>60 秒超时 / 微信进程退出</td><td>停止抓取并清理临时数据；显示重新发起入口，旧数据和已验证旧 Key 保留</td></tr>
+  <tr><td>候选 Key 验证失败</td><td>丢弃候选，不写入安全存储，不覆盖旧 Key；提示版本不兼容或重新抓取</td></tr>
+  <tr><td>加密保存失败</td><td>不显示“连接成功”，允许重试保存或取消；不得退化为明文落盘</td></tr>
+  <tr><td>账号或数据目录发生变化</td><td>停止同步并标记“需重新取钥”；不得把一个账号的 Key 用于另一个账号，已有本地数据不清空</td></tr>
+</table>
+
+<h4>C. 密钥与微信进程生命周期</h4>
+<ul>
+  <li>Key 与当前微信账号、适配版本和数据目录绑定；再次启动时先验证已保存 Key，验证通过则跳过退出账号和抓取流程。</li>
+  <li>只有验证成功的新 Key 才能替换旧 Key；替换前产生的已同步消息、关系内容和消息总结不受影响。</li>
+  <li>取钥并完成只读开库后，浏览、搜索、同步、AI 分析和导出均不要求微信继续运行；若后续提供发送消息能力，仅发送前需要检查并引导启动微信。</li>
+  <li>版本不兼容时停止同步并报告原因，不尝试写原库，也不通过反复扫描或反复授权规避系统限制。</li>
+</ul>
+
+<!-- FR-02 -->
+<h3><span class="req-id">FR-02</span>关系档案</h3>
+<div class="card">
+  <p><b>触发</b>：用户在会话列表选择联系人并点击「创建关系档案」。</p>
+  <p><b>规则</b>：固定绑定“当前用户 + 一个联系人 + 对应私聊”；用户可设置当前关系标签、备注和回忆，并通过手动 Moment 记录在一起、分手、见面等事实。当前标签不覆盖历史事实。</p>
+  <p><b>结果</b>：档案展示双方、数据覆盖范围、用户确认的关系节点、基础互动统计和最近消息总结。</p>
+  <p><b>状态 / 异常</b>：支持 active / archived；身份映射不明确时要求用户确认，不自动合并联系人；归档只隐藏档案，不删除消息。</p>
+</div>
+
+<!-- FR-03 -->
+<h3><span class="req-id">FR-03</span>关系时间线（核心）</h3>
+<div class="card">
+  <p><b>触发</b>：进入关系档案后手动生成，或打开一份已保存的时间线。</p>
+  <p><b>规则</b>：</p>
+  <ol>
+    <li>仅使用该关系对应私聊中、快照时间之前的消息；展示实际覆盖范围与缺口。</li>
+    <li>AI 生成候选 Chapter 与 Moment；候选阶段使用“开始频繁联系”等可观察描述，不自动写入“恋爱”“分手”等关系事实。</li>
+    <li>每条 AI 内容必须带原文证据；用户可保留、修改、忽略，也可新增手动事实和回忆。</li>
+    <li>已确认内容在新一轮分析中保持不变；新结果作为新版本或候选内容呈现。</li>
+  </ol>
+  <p><b>结果</b>：按时间展示阶段、关键时刻、双方发言与互动统计，支持点击证据回跳原文。</p>
+  <p><b>状态 / 异常</b>：候选内容为 pending，确认后为 confirmed，忽略后为 dismissed；样本不足时只显示消息与统计，不强行划分阶段。</p>
+</div>
+
+<!-- FR-04 -->
+<h3><span class="req-id">FR-04</span>双方变化回顾（核心）</h3>
+<div class="card">
+  <p><b>触发</b>：用户选择同一段关系内的两个时段，点击「对比变化」。</p>
+  <p><b>规则</b>：分别标注“我 / TA / 双方互动”；本地计算发言数、主动发起率、回复间隔、活跃时段等统计，AI 只总结称呼、表达、话题和互动方式的可观察变化。跨时段对比使用同一指标口径，缺失或不可比时明确提示。</p>
+  <p><b>结果</b>：并列展示两个时段的统计差异与 AI 变化观察；每条观察附对应时段的原文证据，用户可确认或否定。</p>
+  <p><b>状态 / 异常</b>：任一时段无消息或样本不足时不生成该侧语义结论；无消息不等于冷战，统计差异不等于感情变化。</p>
+</div>
+
+<!-- FR-05 -->
+<h3><span class="req-id">FR-05</span>消息总结（会话 + 个人年度）</h3>
+<h4>A. 通用规则</h4>
+<div class="card">
+  <p><b>触发</b>：用户在「总结」页选择「会话总结」或「我的年度总结」，设置目标与周期后点击「生成总结」；P0 均为手动生成。</p>
+  <p><b>周期规则</b>：按本机时区划分自然日、自然月和自然年；当前未结束的周期统计至最近一次成功同步时间。总结必须标明目标、所选周期、实际数据覆盖范围和生成时间。</p>
+  <p><b>结果</b>：保存可回跳原文的消息总结，区分本地统计与 AI 总结；历史总结可按总结类型、周期和时间查看、导出。</p>
+  <p><b>状态 / 异常</b>：目标范围内无符合条件的本地消息时仅保存空总结，不调用 LLM；AI 不可用时仍可查看本地统计和消息明细；生成失败不影响历史总结。</p>
+</div>
+<h4>B. 会话周期总结</h4>
+<div class="card">
+  <p><b>范围</b>：选择一个私聊或群聊，支持日度、月度、年度；使用该会话在所选周期内的全部本地消息。</p>
+  <p><b>内容</b>：本地计算消息总量、本人发言数、活跃天数和活跃时段，AI 仅整理主要话题与重要消息摘要。所有 AI 摘要必须附原文证据，不生成关系判断、待办、活跃排行或工作汇报式结论。</p>
+</div>
+<h4>C. 我的年度总结</h4>
+<div class="card">
+  <p><b>范围</b>：以当前微信本人和自然年为目标，提取该年在<b>全部私聊和群聊</b>中由本人发送的本地消息；统计与 AI 输入均只使用这些本人消息，不纳入他人发言。</p>
+  <p><b>提取规则</b>：按已确认的发送者身份过滤，保留消息来源会话、会话类型、发送时间和原文引用；文本用于内容总结，未解析的图片、语音、文件仅计入类型与数量，不臆测正文。</p>
+  <p><b>内容</b>：展示年度消息总量、私聊 / 群聊分布、覆盖会话数、活跃月份与日期、主要话题和重要消息摘要；支持按月份或来源会话查看本人消息明细，并从总结或明细回跳原会话中的对应消息。</p>
+  <p><b>身份异常</b>：当前本人映射不明确或账号发生变化时禁止生成，先要求确认身份并重新同步，不得混合不同微信账号的消息。</p>
+</div>
+
+<!-- FR-06 -->
+<h3><span class="req-id">FR-06</span>AI 模型配置</h3>
+<div class="card">
+  <p><b>触发</b>：首次使用 AI 功能或进入设置。</p>
+  <p><b>规则</b>：配置 OpenAI-compatible 地址、模型与 API Key；发送前显示数据范围和 Provider，密钥仅保存在系统安全存储中。</p>
+  <p><b>结果</b>：连接测试返回可用性与模型信息，不返回或记录密钥。</p>
+  <p><b>状态 / 异常</b>：未配置、鉴权失败、限流和输出无效均有明确错误；同步与本地统计不依赖 LLM，可继续使用。</p>
+</div>
+
+<!-- FR-07 -->
+<h3><span class="req-id">FR-07</span>本地存储与导出</h3>
+<div class="card">
+  <p><b>触发</b>：用户保存分析结果、主动导出或清空本地数据。</p>
+  <p><b>规则</b>：消息、关系内容、任务与消息总结存本机 SQLite；导出 HTML / Markdown / PNG 时标明事实、统计和 AI 观察，保留证据链接对应的原文引用。</p>
+  <p><b>结果</b>：导出至用户选择的位置；归档、删除关系派生内容和清空全部数据分别确认，避免误删原始同步数据。</p>
+  <p><b>状态 / 异常</b>：导出失败不损坏已保存内容；无有效证据的 AI 结论不得进入正式结果或导出。</p>
+</div>
+
+<!-- FR-08（P1） -->
+<h3><span class="req-id">FR-08</span>自动化 <span class="pill p2">P1</span></h3>
+<div class="card">
+  <p><b>触发</b>：用户为指定会话或关系创建规则并启用 CRON 调度。</p>
+  <p><b>规则</b>：动作限定为同步、生成消息总结、生成候选变化；保存目标类型与 ID、动作、CRON、时区、启用状态和执行历史。同一计划时间防重，同一规则串行执行。</p>
+  <p><b>结果</b>：保存消息总结或候选观察，系统通知仅含任务名称、状态与本地跳转，不含聊天正文。</p>
+  <p><b>状态 / 异常</b>：单次失败记录原因且不阻塞下次调度；无新消息时跳过 AI；自动任务不得修改用户已确认的事实或内容。</p>
+</div>
+
+<!-- ============ 6 ============ -->
+<h2 id="s6"><span class="num">6</span>共享规则与对象模型</h2>
+
+<h3>6.1 对象关系</h3>
+<pre><code>Person（我）1 ── * Relationship * ── 1 Person（TA）
+Relationship 1 ── 1 Conversation（对应私聊）
+Conversation 1 ── * Message
+Relationship 1 ── * Chapter（阶段）/ Moment（时刻）/ Change（变化）
+Conversation 1 ── * Report（私聊 / 群聊周期总结）
+Person 1 ── * Report（个人年度总结，仅本人发送）
+Chapter / Moment / Change * ── * Message（evidence 多对多）
+Automation * ── 1 Conversation 或 Relationship（P1）
+Provider（LLM 配置）独立维护，可配置多个</code></pre>
+
+<h3>6.2 关键字段</h3>
+<table>
+  <tr><th>对象</th><th>关键字段</th></tr>
+  <tr><td>Relationship</td><td>id、self_person_id、peer_person_id、conversation_id（UNIQUE）、label（friend / lover / ex_lover / undefined）、note、status（active / archived）、created_at</td></tr>
+  <tr><td>Person</td><td>id、wxid（UNIQUE）、is_self、昵称、备注、头像路径、首条消息时间、最近活跃时间</td></tr>
+  <tr><td>Message</td><td>id、conversation_id、sender_person_id、source_key（UNIQUE）、type、content、sent_at</td></tr>
+  <tr><td>Chapter</td><td>id、relationship_id、version_id、start_at、end_at、title、summary、status（pending / confirmed / dismissed）、evidence_ids[]</td></tr>
+  <tr><td>Moment</td><td>id、relationship_id、occurred_at、title、summary、kind（ai / manual）、status、evidence_ids[]</td></tr>
+  <tr><td>Change</td><td>id、relationship_id、run_id、dimension、period_a、period_b、summary、status、evidence_ids[]</td></tr>
+  <tr><td>Report</td><td>id、run_id、relationship_id、period_start、period_end、content_md、generated_at、export_paths</td></tr>
+  <tr><td>Automation（P1）</td><td>id、name、relationship_id、action、cron、timezone、enabled、last_run_at、last_run_status</td></tr>
+</table>
+
+<h3>6.3 引用溯源规则</h3>
+<p>所有 AI 生成的章节、时刻、变化与消息总结必须返回 <code>evidence</code>（消息 ID 数组），且引用必须通过 8.6 的证据校验。前端展示为可点击的角标，点击后跳到来源私聊或群聊内的对应消息位置。<b>没有有效 evidence 的结论不得进入 confirmed 状态，也不得导出。</b></p>
+
+<!-- ============ 7 ============ -->
+<h2 id="s7"><span class="num">7</span>隐私、权限与异常</h2>
+
+<div class="callout danger">
+  <b>红线</b>：原始消息内容只允许流向两个目的地 —— ① 本机 SQLite；② 用户配置的 LLM Provider。绝不发送到 WeTrace 自己的服务器（首版也不设服务器）。
+</div>
+
+<ul>
+  <li>微信原始数据库<b>只读</b>，不修改、不写回。</li>
+  <li>LLM API Key 与微信数据库 Key 均使用系统安全存储或操作系统保护的加密容器（macOS Keychain / Windows DPAPI），不写明文配置文件，不进入日志、导出文件或 Renderer。</li>
+  <li>进程读取能力仅用于用户主动发起的登录取钥；不得保存完整内存转储，不得读取或上传与密钥派生无关的内容，任务结束后立即释放。</li>
+  <li>导出消息总结由用户主动触发，导出路径用户自选；导出内容默认不含 wxid、头像等身份标识。</li>
+  <li>关系档案涉及对方数据：仅本机可见，删除单个关系只删除派生分析内容，不触碰微信原库。</li>
+  <li>提供「一键清空本地数据」按钮，二次确认中明确将删除 SQLite、缓存和已保存的微信 Key；完成后下次使用需重新连接。</li>
+</ul>
+
+<!-- ============ 8 ============ -->
+<h2 id="s8"><span class="num">8</span>技术方案</h2>
+
+<div class="callout">
+  <b>设计基线</b>：参考 TraceMemo 已公开的开发文档，采用 Electron + React + TypeScript。以下模块、接口与数据模型均为 WeTrace 的独立设计，不代表 TraceMemo 的内部实现。
+</div>
+
+<h3>8.1 技术选型</h3>
+<table>
+  <tr><th>层</th><th>选型</th><th>决策理由</th></tr>
+  <tr><td>桌面运行时</td><td><b>Electron</b></td><td>与参考项目技术基线一致；原生能力、跨平台打包与调试生态成熟</td></tr>
+  <tr><td>前端</td><td>React + TypeScript + Vite</td><td>类型安全、组件生态完整；构建配置简单</td></tr>
+  <tr><td>包管理 / 运行时</td><td>pnpm + Node.js 24 LTS</td><td>锁定版本并提交 lockfile，保证构建可复现</td></tr>
+  <tr><td>本地数据库</td><td>SQLite，WAL 模式</td><td>单文件、事务可靠；原始数据与分析结果同机存储</td></tr>
+  <tr><td>主进程数据库访问</td><td>better-sqlite3（同步 API + 主进程串行写入）</td><td>仅主进程可访问；通过迁移脚本管理 schema 版本</td></tr>
+  <tr><td>LLM 接入</td><td>OpenAI-compatible HTTP 适配层</td><td>统一聊天补全、结构化输出、错误与重试语义</td></tr>
+  <tr><td>定时调度</td><td>主进程持久化调度器 <span class="pill p2">P1</span></td><td>规则与执行记录落 SQLite；重启后恢复调度</td></tr>
+  <tr><td>总结导出</td><td>HTML 模板 + 隐藏 BrowserWindow 渲染 PNG</td><td>HTML 与长图共用一份数据及版式</td></tr>
+  <tr><td>测试</td><td>Vitest + Playwright</td><td>覆盖单元、IPC 契约、Service 集成和核心 E2E</td></tr>
+</table>
+
+<h3>8.2 进程与信任边界</h3>
+<pre><code>┌──────────────────── Renderer（React）────────────────────┐
+│ 消息列表 / 聊天窗 / 关系档案 / 时间线 / 总结 / 设置      │
+│ 无 Node 权限；不直接读数据库；不持有任何密钥             │
+└────────────────────────┬─────────────────────────────────┘
+                         │ contextBridge + 类型化 IPC
+┌────────────────────────┴─────────────────────────────────┐
+│ Preload：白名单 API、参数校验、事件订阅 / 取消订阅         │
+└────────────────────────┬─────────────────────────────────┘
+                         │
+┌────────────────────────┴─────────────────────────────────┐
+│ Main Process                                            │
+│ Sync Service │ Key Capture │ Message Query               │
+│ Timeline Pipeline │ Change Comparison │ Report Service   │
+│ Export Service │ Provider Gateway │ Automation（P1）     │
+└───────────────┬───────────────────────┬──────────────────┘
+                │                       │
+        ┌───────┴────────┐      ┌───────┴────────┐
+        │ 本地 SQLite    │      │ 用户配置的 LLM │
+        │ 微信只读适配器 │      │ HTTPS Provider │
+        └────────────────┘      └────────────────┘</code></pre>
+<table>
+  <tr><th>边界</th><th>强制规则</th></tr>
+  <tr><td>Renderer</td><td><code>contextIsolation: true</code>、<code>nodeIntegration: false</code>；禁止任意 IPC 通道名和文件路径透传</td></tr>
+  <tr><td>Preload</td><td>只暴露显式 API；所有输入做运行时 schema 校验；返回结构化错误码</td></tr>
+  <tr><td>Main</td><td>独占微信连接、SQLite、密钥与 LLM 请求；长任务通过队列执行</td></tr>
+  <tr><td>网络</td><td>仅 Provider Gateway 可发起 AI 请求；日志不得记录消息正文、密钥和完整 Prompt</td></tr>
+</table>
+
+<h3>8.3 代码模块拆分</h3>
+<pre><code>wetrace/
+├── src/
+│   ├── main/
+│   │   ├── index.ts
+│   │   ├── ipc/                    # IPC handler 与输入校验
+│   │   ├── wechat/                 # 数据目录、Key、只读连接、增量同步
+│   │   ├── db/                     # connection / migrations / repositories
+│   │   ├── providers/              # LLM 适配、鉴权、限流、超时、重试
+│   │   ├── relationship/           # 快照、采样、阶段/时刻抽取、变化对比、证据校验
+│   │   ├── reports/                # 日度 / 月度 / 年度总结与模板渲染
+│   │   ├── automation/             # 调度、执行、恢复、历史（P1）
+│   │   └── exports/                # HTML / Markdown / PNG
+│   ├── preload/
+│   │   └── index.ts                # contextBridge 白名单 API
+│   ├── renderer/
+│   │   ├── pages/
+│   │   ├── components/
+│   │   └── stores/
+│   └── shared/
+│       ├── contracts/              # IPC DTO、事件、错误码
+│       ├── relationship.ts         # 时间线 / 变化 schema 与状态
+│       ├── report.ts
+│       └── automation.ts
+├── tests/
+│   ├── fixtures/                   # 全合成聊天数据
+│   ├── unit/
+│   ├── contract/
+│   ├── integration/
+│   └── e2e/
+└── resources/templates/</code></pre>
+
+<h3>8.4 本地数据模型</h3>
+<p>以下只列核心约束；具体 SQL migration 在开发阶段以本模型为事实来源。</p>
+<table>
+  <tr><th>表</th><th>关键字段与约束</th><th>用途</th></tr>
+  <tr><td><code>persons</code></td><td><code>id</code> PK；<code>wxid</code> UNIQUE；<code>is_self</code>（我本人 1 条）；昵称、备注、头像路径、时间戳</td><td>人的稳定身份，显示名可变</td></tr>
+  <tr><td><code>conversations</code></td><td><code>id</code> PK；<code>peer_person_id</code>；类型、最近消息时间</td><td>私聊 / 群聊</td></tr>
+  <tr><td><code>messages</code></td><td><code>id</code> PK；会话 ID、发送者 ID、来源消息键、类型、正文、发送时间；来源键 UNIQUE</td><td>同步幂等；保存原文用于溯源</td></tr>
+  <tr><td><code>relationships</code></td><td><code>id</code> PK；self / peer person、<code>conversation_id</code> UNIQUE、label、note、status</td><td>一段双人关系，唯一绑定一个私聊</td></tr>
+  <tr><td><code>sync_cursors</code></td><td>来源、游标、最近同步时间、状态</td><td>断点续传与增量同步</td></tr>
+  <tr><td><code>analysis_runs</code></td><td>ID、目标类型与目标 ID、类型（timeline / change / summary）、时间窗、周期类型（day / month / year，可选）、采样快照 ID、状态、进度、错误码、Provider / 模型、Prompt 版本</td><td>时间线、变化对比与消息总结的统一任务记录</td></tr>
+  <tr><td><code>relationship_versions</code></td><td>ID、relationship_id、snapshot_at、schema_version、状态、生成时间</td><td>不可变时间线版本</td></tr>
+  <tr><td><code>chapters</code> / <code>moments</code></td><td>ID、relationship_id、version_id（手动时刻为 NULL）、时间范围、标题、摘要、kind、status</td><td>阶段与关键时刻</td></tr>
+  <tr><td><code>changes</code></td><td>ID、relationship_id、run_id、dimension、period_a、period_b、摘要、status</td><td>双方变化观察</td></tr>
+  <tr><td><code>evidence</code></td><td>target_type、target_id、message_id、引用序号；<code>(target_type, target_id, message_id)</code> UNIQUE</td><td>结论与原文多对多关联</td></tr>
+  <tr><td><code>reports</code></td><td>ID、run_id、target_type（conversation / person）、target_id、period_type（day / month / year）、period_start、时间窗、Markdown、HTML 路径、生成时间</td><td>私聊 / 群聊周期总结与个人年度总结</td></tr>
+  <tr><td><code>automation_rules</code></td><td>目标类型与目标 ID、动作、CRON、时区、启用状态、next_run_at <span class="pill p2">P1</span></td><td>持久化规则</td></tr>
+  <tr><td><code>automation_runs</code></td><td>rule_id、scheduled_at、started_at、状态、run_id、错误码 <span class="pill p2">P1</span></td><td>审计、防重与失败排查</td></tr>
+</table>
+<p><b>必要索引</b>：<code>messages(conversation_id, sent_at)</code>、<code>messages(sender_person_id, sent_at)</code>、<code>chapters(relationship_id, start_at)</code>、<code>evidence(message_id)</code>、<code>analysis_runs(status)</code>、<code>automation_rules(enabled, next_run_at)</code>。所有删除操作按外键级联清理派生数据；原始消息只随用户清空数据而删除。</p>
+
+<h3>8.5 微信同步管线</h3>
+<div class="flow">
+  <span class="step">定位数据目录</span><span class="arr">→</span>
+  <span class="step">验证已存 Key / 60 秒登录取钥</span><span class="arr">→</span>
+  <span class="step">立即验证并加密保存</span><span class="arr">→</span>
+  <span class="step">只读开库</span><span class="arr">→</span>
+  <span class="step">全量或增量读取</span><span class="arr">→</span>
+  <span class="step">标准化会话类型与发送者</span><span class="arr">→</span>
+  <span class="step">事务 UPSERT</span><span class="arr">→</span>
+  <span class="step">推进游标</span>
+</div>
+<ul>
+  <li><b>适配器隔离</b>：微信版本差异与平台取钥差异封装在 <code>WechatSourceAdapter</code> 和原生读取组件中；上层只接收统一的 Person / Conversation / Message。</li>
+  <li><b>进程解耦</b>：Key 验证、加密保存和只读开库完成后，同步不依赖微信进程存活；微信退出或后续被用户关闭不得导致已打开任务清空本地数据。</li>
+  <li><b>一致性</b>：每批消息与游标在同一事务提交；来源消息键保证重复同步不产生副本。</li>
+  <li><b>本人映射</b>：发送者统一关联到本地 Person，并用当前微信账号确认 is_self；群聊发送者无法确认时保留未知状态，不得猜测为本人。</li>
+  <li><b>并发</b>：同步、时间线生成、消息总结可以并行读取；SQLite 写入串行化，避免数据库锁扩散到 UI。</li>
+  <li><b>降级</b>：无法识别微信版本时停止同步并报告 <code>WECHAT_VERSION_UNSUPPORTED</code>，不得尝试写原库。</li>
+  <li><b>可恢复</b>：应用重启后从最近已提交游标继续；失败批次整体回滚。</li>
+</ul>
+
+<h3>8.6 关系时间线生成管线（核心）</h3>
+<div class="flow">
+  <span class="step">冻结输入快照</span><span class="arr">→</span>
+  <span class="step">过滤与采样</span><span class="arr">→</span>
+  <span class="step">确定性统计</span><span class="arr">→</span>
+  <span class="step">语义分块</span><span class="arr">→</span>
+  <span class="step">并行抽取</span><span class="arr">→</span>
+  <span class="step">合并去重</span><span class="arr">→</span>
+  <span class="step">证据校验</span><span class="arr">→</span>
+  <span class="step">版本保存</span>
+</div>
+
+<h4>A. 输入与采样</h4>
+<ul>
+  <li>按 <code>relationship_id + sent_at &lt;= snapshot_at</code> 固定输入，运行中新同步的消息不得混入本次结果。</li>
+  <li>只将文本消息送入语义分析；图片、语音、链接等保留类型与时间元数据，正文缺失时不臆测内容。</li>
+  <li>统计与语义分离：双方发言数、主动发起率、回复间隔中位数、活跃时段由本地 SQL 计算，不交给 LLM。</li>
+  <li>默认覆盖全部本地消息；超过输入预算（约 60k tokens）时按时间分层采样，近 3 个月全量保留，并在结果页显示实际覆盖范围与消息数。</li>
+  <li>单关系消息少于 200 条或覆盖不足 30 天时，只展示消息与统计，不调用语义抽取。</li>
+</ul>
+
+<h4>B. 分块与模型调用</h4>
+<ul>
+  <li>按时间连续性分块，再按 Token 预算截断；每条消息携带内部 <code>message_id</code>、发送时间与发送方。</li>
+  <li>同一批消息只做一次抽取调用，同时产出章节候选、关键时刻候选与变化候选，避免重复计费。</li>
+  <li>分块任务有界并发（默认 3）；Provider 限流时指数退避，仅对超时、429 和可重试 5xx 重试，上限 3 次。</li>
+  <li>每块输出固定 JSON Schema；解析失败进入 1 次修复重试，仍失败则标记该块失败，不伪造结论。</li>
+  <li>汇总阶段只能引用分块结论及其证据，不得引入新事实。</li>
+</ul>
+
+<h4>C. 输出契约</h4>
+<pre><code>{
+  "schema_version": 1,
+  "relationship_id": "rel_001",
+  "coverage": {
+    "from": "2026-07-01T00:00:00+08:00",
+    "to": "2026-10-28T00:00:00+08:00",
+    "message_count": 1200,
+    "sampled": false
+  },
+  "chapters": [{
+    "title": "开始频繁联系",
+    "start_at": "2026-07-01T00:00:00+08:00",
+    "end_at": "2026-08-14T00:00:00+08:00",
+    "summary": "回复间隔缩短，出现每日固定问候",
+    "confidence": "medium",
+    "evidence_ids": ["msg_101", "msg_205"]
+  }],
+  "moments": [{
+    "occurred_at": "2026-07-02T00:00:00+08:00",
+    "title": "首次互道晚安",
+    "summary": "当晚首次出现睡前问候",
+    "evidence_ids": ["msg_110"]
+  }],
+  "changes": [{
+    "dimension": "称呼",
+    "period_a": "2026-07",
+    "period_b": "2026-10",
+    "summary": "从全名改为昵称",
+    "evidence_ids": ["msg_900"]
+  }],
+  "limitations": ["仅覆盖本地文字消息，不代表线下互动"]
+}</code></pre>
+
+<h4>D. 证据与质量闸门</h4>
+<table>
+  <tr><th>校验</th><th>失败处理</th></tr>
+  <tr><td>JSON Schema / 枚举 / 长度</td><td>拒绝结果并进入修复重试</td></tr>
+  <tr><td>每个 <code>evidence_id</code> 必须属于本次输入快照</td><td>移除无效引用；无有效引用的结论不得入库</td></tr>
+  <tr><td>证据消息必须属于该关系对应的私聊</td><td>整条结论丢弃，记录质量日志</td></tr>
+  <tr><td>原文引用必须是证据消息的精确子串</td><td>不匹配则不保存该引文</td></tr>
+  <tr><td>本地统计值必须与数据库重算一致</td><td>以本地重算值覆盖模型输出</td></tr>
+  <tr><td>章节 / 时刻不得写入“恋爱 / 分手 / 出轨”等关系事实</td><td>仅保留为候选提示，必须由用户手动确认</td></tr>
+</table>
+
+<h4>E. 版本与用户确认</h4>
+<ul>
+  <li>每次生成写入新版本（保留最近 10 版）；已确认条目进入新版本后仍为 confirmed，不被自动改写。</li>
+  <li>确认 / 修改 / 忽略只作用于单条章节、时刻或变化，不影响其他候选。</li>
+  <li>用户手动新增的 Moment 不参与 AI 覆盖，只参与时间线展示与导出。</li>
+</ul>
+
+<h4>F. 变化对比（FR-04）</h4>
+<ul>
+  <li>用户在同一关系内选择两个等长时段，默认为最近 30 天 vs 前 30 天；先输出本地统计差异，再发起一次对比抽取。</li>
+  <li>对比输入只包含两时段采样消息与统计表；输出维度限定为称呼、表达方式、话题、主动性与回复节奏。</li>
+  <li>任一时段不足 50 条消息时只输出统计，不输出语义结论；两时段口径必须一致，不可比时明确标注。</li>
+</ul>
+<div class="callout warn">
+  时间线表达为“基于本地聊天样本的可观察变化”，不得输出心理 / 医学诊断，不得把模型推断表述为确定事实。样本不足的时段返回“数据不足”，不强行划分阶段。
+</div>
+
+<h3>8.7 消息总结生成管线</h3>
+<p>会话总结与个人年度总结复用 <code>analysis_runs</code>、分块、Provider Gateway 和证据校验。先按本机时区确定自然周期并冻结本地消息快照，再按总结类型提取消息；当前未结束周期的数据截至最近一次成功同步时间，无符合条件消息时生成空总结并跳过 LLM。</p>
+<ul>
+  <li><b>会话总结</b>：目标为 <code>conversation_id + period_type + period_start</code>，读取所选私聊或群聊的全部本地消息；由本地 SQL 计算消息量、本人发言数、活跃天数和活跃时段。</li>
+  <li><b>个人年度总结</b>：目标为 <code>self_person_id + year</code>，从全部私聊和群聊中筛选 <code>sender_person_id = self_person_id</code> 且处于所选自然年的消息；统计与 AI 输入均不得包含他人发言。</li>
+  <li><b>证据校验</b>：会话总结的引用必须属于目标会话；个人年度总结的引用必须是目标年份内本人发送的消息，并保留来源会话用于回跳。AI 仅整理主要话题与重要消息摘要，所有摘要均须引用有效消息。</li>
+</ul>
+
+<h3>8.8 任务状态与错误契约</h3>
+<pre><code>queued → running → succeeded
+                  → failed
+                  → cancelled
+
+running 任务仅在当前进程持有执行锁；
+应用异常退出后，启动时将孤儿 running 标为 interrupted，允许用户重试。</code></pre>
+<table>
+  <tr><th>错误码</th><th>含义</th><th>用户可执行动作</th></tr>
+  <tr><td><code>INSUFFICIENT_MESSAGES</code></td><td>样本低于生成门槛</td><td>扩大时间窗或取消</td></tr>
+  <tr><td><code>INSUFFICIENT_EVIDENCE</code></td><td>AI 结论缺少可校验的原文引用</td><td>重试或改为手动记录</td></tr>
+  <tr><td><code>PROVIDER_NOT_CONFIGURED</code></td><td>无可用 Provider</td><td>跳转设置</td></tr>
+  <tr><td><code>PROVIDER_AUTH_FAILED</code></td><td>鉴权失败</td><td>更新 Key，不自动重复请求</td></tr>
+  <tr><td><code>PROVIDER_RATE_LIMITED</code></td><td>超过重试预算</td><td>稍后重试</td></tr>
+  <tr><td><code>MODEL_OUTPUT_INVALID</code></td><td>结构化输出持续无效</td><td>重试或更换模型</td></tr>
+  <tr><td><code>WECHAT_NOT_RUNNING</code></td><td>未找到可绑定的微信进程</td><td>打开微信并停在未登录窗口后重新检测</td></tr>
+  <tr><td><code>WECHAT_LOGOUT_REQUIRED</code></td><td>微信仍处于已登录状态</td><td>在微信内退出账号，不能只关闭窗口</td></tr>
+  <tr><td><code>PROCESS_ACCESS_DENIED</code></td><td>系统未授予所需读取能力</td><td>查看平台授权说明；由用户决定是否重试</td></tr>
+  <tr><td><code>CAPTURE_TIMEOUT</code></td><td>60 秒内未完成登录取钥</td><td>重新发起；旧 Key 与本地数据保持不变</td></tr>
+  <tr><td><code>KEY_VALIDATION_FAILED</code></td><td>候选 Key 无法只读打开目标数据库</td><td>丢弃候选并重新抓取或查看兼容说明</td></tr>
+  <tr><td><code>KEY_STORAGE_FAILED</code></td><td>验证后的 Key 未能加密保存</td><td>重试保存或取消，不转为明文存储</td></tr>
+  <tr><td><code>WECHAT_ACCOUNT_CHANGED</code></td><td>当前账号或数据目录与已保存连接不一致</td><td>确认账号后重新取钥，不自动清空旧数据</td></tr>
+  <tr><td><code>SELF_IDENTITY_UNCONFIRMED</code></td><td>当前微信本人映射未确认，无法可靠筛选本人消息</td><td>确认身份并重新同步后再生成个人年度总结</td></tr>
+  <tr><td><code>WECHAT_VERSION_UNSUPPORTED</code></td><td>微信版本未适配</td><td>查看兼容说明</td></tr>
+</table>
+
+<h3>8.9 自动化调度（P1）</h3>
+<ul>
+  <li>启动时加载启用规则并计算 <code>next_run_at</code>；CRON 显式保存时区，默认本机时区。</li>
+  <li>以 <code>rule_id + scheduled_at</code> 唯一约束防重；同一规则串行，不同规则可有界并发。</li>
+  <li>应用未运行期间不承诺执行。重启后默认只记录 missed，不补跑，避免集中消耗 Token。</li>
+  <li>自动任务和手动任务走同一 Service 与状态机；通知只包含任务名称、状态和本地跳转，不包含聊天正文。</li>
+</ul>
+
+<h3>8.10 IPC 与 Provider 接口</h3>
+<pre><code>// Renderer 只能调用 Preload 暴露的白名单 API
+interface WeTraceApi {
+  getConnectionStatus(): Promise&lt;ConnectionStatus&gt;;       // 不返回 Key
+  startWechatKeyCapture(): Promise&lt;ConnectionStatus&gt;;
+  cancelWechatKeyCapture(): Promise&lt;void&gt;;
+  syncWechat(input: SyncInput): Promise&lt;SyncResult&gt;;
+  getCurrentPerson(): Promise&lt;Person&gt;;
+  listConversations(query: ConversationQuery): Promise&lt;Page&lt;Conversation&gt;&gt;;
+  listMyMessages(query: MyMessageQuery): Promise&lt;Page&lt;Message&gt;&gt;; // 仅返回当前本人发送的消息
+  listRelationships(query: RelationshipQuery): Promise&lt;Page&lt;Relationship&gt;&gt;;
+  createRelationship(input: CreateRelationshipInput): Promise&lt;Relationship&gt;;
+  getRelationship(id: string): Promise&lt;RelationshipDetail&gt;;
+  listMessages(query: MessageQuery): Promise&lt;Page&lt;Message&gt;&gt;;
+  generateTimeline(input: GenerateTimelineInput): Promise&lt;AnalysisRun&gt;;
+  getTimeline(relationshipId: string, versionId?: string): Promise&lt;Timeline&gt;;
+  reviewItem(input: ReviewInput): Promise&lt;void&gt;;      // 确认 / 修改 / 忽略章节、时刻、变化
+  createMoment(input: CreateMomentInput): Promise&lt;Moment&gt;;
+  compareChanges(input: CompareInput): Promise&lt;AnalysisRun&gt;;
+  listSummaries(query: SummaryQuery): Promise&lt;Page&lt;Summary&gt;&gt;;
+  createSummary(input: CreateSummaryInput): Promise&lt;AnalysisRun&gt;;
+  cancelRun(runId: string): Promise&lt;void&gt;;
+  onRunEvent(listener: (event: RunEvent) =&gt; void): Unsubscribe;
+}
+
+interface LlmProvider {
+  testConnection(): Promise&lt;ProviderHealth&gt;;
+  generateStructured&lt;T&gt;(request: {
+    model: string;
+    schema: JsonSchema;
+    messages: LlmMessage[];
+    signal: AbortSignal;
+  }): Promise&lt;T&gt;;
+}</code></pre>
+<p>Provider Secret 由系统安全存储能力保管，数据库仅保存引用；连接测试、时间线生成和消息总结不得把 Secret 返回 Renderer。</p>
+
+<h3>8.11 非功能要求</h3>
+<table>
+  <tr><th>类别</th><th>要求</th></tr>
+  <tr><td>隐私</td><td>无 WeTrace 服务端；无埋点上传；日志默认脱敏；清空数据覆盖数据库、缓存、导出临时文件与已保存密钥</td></tr>
+  <tr><td>可靠性</td><td>同步幂等；分析结果基于快照；数据库迁移前自动备份；失败任务可重试且不产生重复版本；取钥失败不覆盖已验证旧 Key</td></tr>
+  <tr><td>性能</td><td>列表按 50 条分页；单关系 10 万条消息规模下时间线首屏 ≤ 2s、变化对比统计 ≤ 5s；30 天窗口的时间线生成 ≤ 90s（不含排队）；长任务脱离 UI 线程，有界并发与输入预算</td></tr>
+  <tr><td>交互与可访问性</td><td>默认明亮主题；正文对比度至少 4.5:1；导航、会话列表、聊天工具按钮和弹层支持键盘焦点；加载、空、失败和禁用状态具有文字反馈</td></tr>
+  <tr><td>可维护性</td><td>共享 DTO 单一来源；Prompt 和输出 schema 均带版本；Provider 与微信来源均可替换适配器</td></tr>
+  <tr><td>可移植性</td><td>macOS / Windows 路径与原生能力隔离；平台专属代码不得泄漏进领域 Service</td></tr>
+</table>
+
+<h3>8.12 测试与验收</h3>
+<table>
+  <tr><th>层级</th><th>必须覆盖</th></tr>
+  <tr><td>Unit</td><td>取钥状态机与 60 秒边界、旧 Key 保留、自然日 / 月 / 年边界、未结束周期覆盖范围、群聊发送者映射、本人消息过滤、分块边界、采样稳定性、统计计算、schema 校验、证据归属、版本合并、CRON 防重（P1）、错误映射</td></tr>
+  <tr><td>Contract</td><td>Preload / IPC 参数与返回值、取钥取消与超时事件、Provider 结构化输出、异常码</td></tr>
+  <tr><td>Integration</td><td>含私聊与群聊的合成微信 fixture → Key 验证 → 同步 → 重跑幂等 → 会话总结 / 本人年度总结 → 来源会话引用回跳；数据库迁移、中断恢复与微信进程退出</td></tr>
+  <tr><td>Component / E2E</td><td>首次连接、已登录阻断、授权取消、抓取超时、本人头像、私聊 / 群聊选择、聊天搜索与日期定位、会话周期总结、本人消息明细与个人年度总结、身份不明阻断、空周期、失败重试、证据高亮、导出、自动化启停（P1）</td></tr>
+  <tr><td>人工质量评估</td><td>固定合成样本 + 经授权的脱敏样本，检查结论是否有据、引用是否支持结论、是否越界推断</td></tr>
+</table>
+<p><b>P0 完成门槛</b>：主旅程在 macOS 与 Windows 均可完成；未登录前置检测、60 秒倒计时、取消、超时和 Key 验证均有可恢复路径；连接后本人头像、会话列表、私聊 / 群聊聊天窗与四类顶部工具可用，群聊的关系档案入口明确禁用；微信退出后仍可浏览和同步本地数据；日度、月度、年度会话总结与个人年度总结均可生成并回跳原文，个人年度总结仅纳入本人发送的消息，身份不明或账号变化时阻断，空周期不调用 AI；同步重跑无重复消息；任务失败不丢已有数据；导出文件不含 wxid / 头像；测试与构建日志不包含真实聊天内容或密钥。</p>
+
+<h3>8.13 与 TraceMemo 的关系</h3>
+<div class="callout">
+  参考其产品思路和公开技术基线，<b>不 Fork 代码</b>。差异化点：<br>
+  · TraceMemo = 以「消息 / 会话」为中心的工作台<br>
+  · WeTrace = 本地优先的消息追踪工具，支持周期总结并回溯到原文<br>
+  微信接入层独立实现；消息浏览、周期总结与导出复用统一消息查询和证据管线，当前主线是“持续追踪消息”。
+</div>
+
+<!-- ============ 9 ============ -->
+<h2 id="s9"><span class="num">9</span>决策记录与遗留风险</h2>
+
+<h3>9.1 v1.1 已定决策</h3>
+<table>
+  <tr><th>ID</th><th>议题</th><th>结论</th></tr>
+  <tr><td>D-01</td><td>首版范围</td><td>P0 仅含 FR-00～FR-07；自动化（FR-08）与关系分析的共同群聊上下文（FR-09）下调 P1；私聊 / 群聊消息追踪及个人年度总结属于 P0</td></tr>
+  <tr><td>D-02</td><td>分析窗口</td><td>时间线默认覆盖全部本地消息，超约 60k tokens 时分层采样并保留近 3 个月全量；变化对比默认最近 30 天 vs 前 30 天</td></tr>
+  <tr><td>D-03</td><td>默认 Provider</td><td>不内置模型服务，用户必须自配 OpenAI-compatible Key；首版不提供免费额度或代理</td></tr>
+  <tr><td>D-04</td><td>版本保留</td><td>时间线保留最近 10 个版本；已确认条目永久保留，不被新一轮分析改写</td></tr>
+  <tr><td>D-05</td><td>群成员画像矩阵</td><td>不做。关系分析只针对双人私聊；消息追踪与个人年度总结可覆盖群聊，但不产出群成员或单人人格画像</td></tr>
+  <tr><td>D-06</td><td>产品命名</td><td>WeTrace，代码目录与包名统一为 wetrace</td></tr>
+  <tr><td>D-07</td><td>密钥获取</td><td>微信须先退出账号并停在未登录窗口；读取能力就绪后开启 60 秒抓取，Key 立即验证、加密保存，成功后无需保持微信运行</td></tr>
+  <tr><td>D-08</td><td>视觉方向</td><td>P0 默认明亮桌面主题，以浅灰白背景、白色面板和蓝色主操作色为主，不做大面积深色界面</td></tr>
+  <tr><td>D-09</td><td>消息浏览</td><td>左侧导航底部固定本人头像；「消息」采用会话列表 + 私聊 / 群聊聊天窗，顶部提供搜索、日期、同步和关系档案工具，关系档案仅私聊可用</td></tr>
+  <tr><td>D-10</td><td>发送边界</td><td>P0 保持只读，不提供消息发送；后续若增加该能力，只有发送动作依赖微信进程运行</td></tr>
+  <tr><td>D-11</td><td>产品主线与总结</td><td>背景与目标只围绕本地消息追踪；P0 总结周期统一为日度、月度、年度</td></tr>
+  <tr><td>D-12</td><td>全会话追踪与本人年度总结</td><td>私聊与群聊均纳入消息追踪和会话总结；个人年度总结只提取当前本人在全部私聊与群聊中发送的消息，支持明细筛选和原文回跳，身份不明或账号变化时禁止生成</td></tr>
+</table>
+
+<h3>9.2 遗留风险</h3>
+<table>
+  <tr><th>ID</th><th>风险</th><th>应对</th></tr>
+  <tr><td>R-01</td><td>微信 4.x 小版本更新导致数据库结构或 Key 获取方式失效</td><td>适配器隔离 + 版本探测 + 明确的 unsupported 提示；发版前做兼容性回归</td></tr>
+  <tr><td>R-02</td><td>用户无可用 LLM 或对 Key 成本敏感</td><td>同步、统计、手动事实与导出不依赖 LLM；AI 功能可单独关闭</td></tr>
+  <tr><td>R-03</td><td>长历史一次生成的耗时与成本不可控</td><td>输入预算 + 分层采样 + 分块上限；提供“最近 3 个月”快捷范围</td></tr>
+  <tr><td>R-04</td><td>用户对退出账号、系统授权和 60 秒操作时机不理解，导致首次连接失败</td><td>分步前置检测；准备完成后再倒计时；提供明确提示、取消、超时重试和平台差异化指引</td></tr>
+</table>
+
+<footer class="doc">
+  WeTrace · PRD v1.1 · 2026-10-29 · 本地优先 · 持续追踪消息
+</footer>
+
+</div>
+</body>
+</html>
