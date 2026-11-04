@@ -8,6 +8,7 @@ const PGREP = '/usr/bin/pgrep'
 const LSOF = '/usr/sbin/lsof'
 
 export async function sipEnabled(): Promise<boolean> {
+  if (process.platform !== 'darwin') return false
   try {
     const { stdout } = await run(CSRUTIL, ['status'])
     return !/disabled/i.test(stdout)
@@ -17,6 +18,10 @@ export async function sipEnabled(): Promise<boolean> {
 }
 
 async function wechatPid(): Promise<string | null> {
+  if (process.platform === 'win32') {
+    try { const { stdout } = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '(Get-Process -Name Weixin,WeChat -ErrorAction SilentlyContinue | Select-Object -First 1).Id'], { timeout: 10000, windowsHide: true }); return /^\d+$/.test(stdout.trim()) ? stdout.trim() : null } catch { return null }
+  }
+  if (process.platform !== 'darwin') return null
   try {
     const { stdout } = await run(PGREP, ['-x', 'WeChat'])
     const pid = stdout.trim().split('\n')[0]
@@ -34,6 +39,7 @@ export async function wechatRunning(): Promise<boolean> {
 export async function wechatProcess(): Promise<{ running: boolean; loggedIn: boolean }> {
   const pid = await wechatPid()
   if (!pid) return { running: false, loggedIn: false }
+  if (process.platform === 'win32') return { running: true, loggedIn: false }
 
   try {
     const { stdout } = await run(LSOF, ['-p', pid, '-Fn'], { maxBuffer: 8 << 20 })

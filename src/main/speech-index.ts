@@ -28,13 +28,14 @@ function withConversationIndex<T>(directory: string, accountId: string, conversa
   mkdirSync(directory, { recursive: true, mode: 0o700 })
   const db = new DatabaseSync(join(directory, `${createHash('sha256').update(accountId).digest('hex')}.sqlite`))
   try {
-    db.exec(`CREATE TABLE IF NOT EXISTS speech (room TEXT NOT NULL, sender TEXT NOT NULL, time INTEGER NOT NULL, type INTEGER NOT NULL);
+    db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;
+      CREATE TABLE IF NOT EXISTS speech (room TEXT NOT NULL, sender TEXT NOT NULL, time INTEGER NOT NULL, type INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS speech_room_time ON speech(room, time);
       CREATE TABLE IF NOT EXISTS sources (room TEXT PRIMARY KEY, fingerprint TEXT NOT NULL);`)
     const before = fingerprint()
     const cached = db.prepare('SELECT fingerprint FROM sources WHERE room = ?').get(conversationId)
     if (cached?.fingerprint !== before) {
-      db.exec('BEGIN')
+      db.exec('BEGIN IMMEDIATE')
       try {
         db.prepare('DELETE FROM speech WHERE room = ?').run(conversationId)
         const insert = db.prepare('INSERT INTO speech VALUES (?, ?, ?, ?)')

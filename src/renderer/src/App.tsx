@@ -1,3 +1,12 @@
+import { ScheduledMessagesPanel } from './components/ScheduledMessagesPanel'
+import { VoiceMessage } from './components/VoiceMessage'
+import { StickerContent } from './components/StickerContent'
+import { retainedRecallMessages } from '../../shared/retained-recalls'
+import type { MonitorRoom, MonitorState } from '../../shared/group-monitor'
+import { ChatText } from './components/ChatText'
+import { GroupMonitor } from './components/GroupMonitor'
+import { ActionButton } from './components/ui/ActionButton'
+import { Alert, Image, Input } from 'antd'
 import { DEFAULT_IMAGE_CONCURRENCY, MAX_IMAGE_CONCURRENCY, imageConcurrency } from '../../shared/report-concurrency'
 import { ReportHistory } from './components/ReportHistory'
 import { ReportMessagePicker } from './components/ReportMessagePicker'
@@ -9,14 +18,13 @@ import type { ChatIndexSearchMatch } from '../../shared/chat-index'
 import { IndexedSearchResults } from './components/IndexedSearchResults'
 import { ChatIndexPanel, useChatIndex } from './components/ChatIndexPanel'
 import { createPortal } from 'react-dom'
-import { startTransition, memo, Fragment, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
+import { startTransition, memo, Fragment, useEffect, useLayoutEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   Sparkles,
   ArrowLeft,
   ArrowRight,
   CircleHelp,
   Check,
-  Compass,
   Cpu,
   Database,
   Download,
@@ -47,7 +55,7 @@ import { reportMemberKey, reportMemberName, filterReportMessages } from '../../s
 import { defaultReportStyles, type ReportWritingStyle } from '../../shared/report-styles'
 import { defaultReportTemplates } from '../../shared/report-templates'
 
-type View = 'ai' | 'messages' | 'summary' | 'guide' | 'settings'
+type View = 'send' | 'ai' | 'messages' | 'summary' | 'settings' | 'monitor'
 type SettingsPanel = 'db' | 'image' | 'model' | 'asr' | 'cache' | 'about'
 type SummaryPanel = 'home' | 'generate' | 'templates' | 'example'
 type ReportDatePreset = 'today' | 'yesterday' | 'week' | 'custom'
@@ -90,16 +98,41 @@ const settingsNav: { id: SettingsPanel; label: string; icon: LucideIcon }[] = [
   { id: 'about', label: '关于', icon: Info },
 ]
 
-function MessageContent({ message }: { message: SyncMessage }) {
+function MessageContent({ message, root, conversationId }: { message: SyncMessage; root?: string; conversationId?: string }) {
   const [failedImage, setFailedImage] = useState<string>()
-  if (message.quote) return <><div><MessageContent message={{ ...message, quote: undefined }} /></div><blockquote className="message-quote"><b><SafeText>{message.quote.sender}</SafeText></b><span><SafeText>{message.quote.text}</SafeText></span></blockquote></>
+  const [imagePreviewOpen, setImagePreviewOpen] = useState(false)
+  const [previewImage, setPreviewImage] = useState(message.image)
+  const [previewNote, setPreviewNote] = useState('')
+  const previewRequest = useRef(0)
+  async function openImagePreview(open: boolean) {
+    const request = ++previewRequest.current
+    setImagePreviewOpen(open)
+    if (!open) return
+    setPreviewImage(message.image)
+    setPreviewNote(message.image?.thumbnail ? '当前为缩略图，正在查找本机原图…' : '正在查找本机原图…')
+    if (!root || !conversationId) { setPreviewNote(message.image?.thumbnail ? '本机暂未找到可显示的原图，当前为缩略图。请在微信中打开原图后重试。' : ''); return }
+    try {
+      const result = await window.wetrace.getIndexedConversation({ root, conversationId, at: message.createdAt, limit: 10 })
+      if (request !== previewRequest.current) return
+      if (!result.ok) throw new Error(result.error)
+      const image = result.conversation.messages.find(item => item.id === message.id)?.image
+      if (!image?.source) throw new Error('未找到可显示的原图')
+      setPreviewImage(image)
+      setPreviewNote(image.thumbnail ? '本机暂未找到可显示的原图，当前为缩略图。请在微信中打开原图后重试。' : '')
+    } catch { if (request === previewRequest.current) setPreviewNote('暂未能重新读取原图，当前显示已加载的图片。请刷新聊天记录后重试。') }
+  }
+  if (message.recall) return <div className="message-recalled"><div>{message.recall.media ? <MessageContent message={{ ...message, ...message.recall.media, text: message.recall.original, recall: undefined, revoke: undefined, messageType: message.recall.media.image ? 3 : message.recall.media.voice ? 34 : 1 }} root={root} conversationId={conversationId} /> : <ChatText>{message.recall.original}</ChatText>}</div><small className="message-recall-label">已撤回 · 已保留原文</small></div>
+  if (message.revoke) return <div className="message-revoke-notice"><SafeText>{message.text}</SafeText><small className="message-recall-label">{message.revoke.unresolvedReason === 'capture-gap' ? '捕获窗口存在缺口，未找到对应原文' : message.revoke.unresolvedReason === 'retention-limit' ? '未找到对应原文，较早内容可能已超出保留范围' : message.revoke.unresolvedReason === 'unlinked' ? '已保存会话消息，但暂无法确定对应原文' : '未捕获到可关联的原文'}</small></div>
+  if (message.quote) return <><div><MessageContent message={{ ...message, quote: undefined }} root={root} conversationId={conversationId} /></div><blockquote className="message-quote"><b><SafeText>{message.quote.sender}</SafeText></b><span><ChatText>{message.quote.text}</ChatText></span></blockquote></>
   if (message.forwarded) return <details className="message-forwarded"><summary><SafeText>{message.forwarded.title}</SafeText> · {message.forwarded.entries.length ? `${message.forwarded.entries.length} 条记录` : '内容不可用'}</summary>
-    {message.forwarded.entries.map((entry, index) => <div className="message-forwarded-entry" key={index}><b><SafeText>{entry.sender}</SafeText></b>{entry.time && <small><SafeText>{entry.time}</SafeText></small>}<div><SafeText>{entry.text}</SafeText></div></div>)}
+    {message.forwarded.entries.map((entry, index) => <div className="message-forwarded-entry" key={index}><b><SafeText>{entry.sender}</SafeText></b>{entry.time && <small><SafeText>{entry.time}</SafeText></small>}<div><ChatText>{entry.text}</ChatText></div></div>)}
     {message.forwarded.unavailable && <p>{message.forwarded.unavailable}</p>}
   </details>
+  if (message.messageType === 34) return <VoiceMessage key={`${root}:${conversationId}:${message.id}:${message.createdAt}`} message={message} root={root} conversationId={conversationId ?? ''} />
+  if (message.sticker) return <StickerContent key={`${root}:${message.sticker.md5}:${message.sticker.cdnUrl}`} sticker={message.sticker} root={root} />
   if (message.image) {
     return message.image.source && failedImage !== message.image.source
-      ? <img className="message-image" src={message.image.source} alt="聊天图片" loading="lazy" onError={() => setFailedImage(message.image?.source)} />
+      ? <Image className="message-image" classNames={{ root: 'message-image-preview' }} src={message.image.source} alt="聊天图片" loading="lazy" tabIndex={0} aria-label="查看聊天图片大图" preview={{ open: imagePreviewOpen, onOpenChange: open => { void openImagePreview(open) }, src: previewImage?.source, imageRender: original => <>{original}{previewNote && <div className="image-preview-note" role="status">{previewNote}</div>}</> }} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); void openImagePreview(true) } }} onError={() => { setImagePreviewOpen(false); setFailedImage(message.image?.source) }} />
       : <span className="message-unavailable">{message.image.unavailable || '图片读取失败'}</span>
   }
   if (message.link) {
@@ -112,30 +145,33 @@ function MessageContent({ message }: { message: SyncMessage }) {
   return <>{message.text.split(/(https?:\/\/[^\s<>]+)/g).map((part, index) =>
     /^https?:\/\//.test(part)
       ? <a key={index} href={part} target="_blank" rel="noopener noreferrer"><SafeText>{part}</SafeText></a>
-      : <Fragment key={index}><SafeText>{part}</SafeText></Fragment>
+      : <Fragment key={index}><ChatText>{part}</ChatText></Fragment>
   )}</>
 }
 
 function sameMessage(left: SyncMessage, right: SyncMessage): boolean {
   return left.id === right.id && left.createdAt === right.createdAt && left.messageType === right.messageType && left.from === right.from && left.sender === right.sender && left.avatar === right.avatar && left.text === right.text && left.time === right.time
-    && left.image?.source === right.image?.source && left.image?.unavailable === right.image?.unavailable
+    && JSON.stringify(left.revoke) === JSON.stringify(right.revoke)
+    && left.recall?.original === right.recall?.original && left.recall?.originalAt === right.recall?.originalAt && left.recall?.media === right.recall?.media
+    && left.image?.source === right.image?.source && left.image?.unavailable === right.image?.unavailable && left.image?.thumbnail === right.image?.thumbnail
+    && JSON.stringify(left.sticker) === JSON.stringify(right.sticker)
     && left.link?.url === right.link?.url && left.link?.title === right.link?.title && left.link?.description === right.link?.description
     && JSON.stringify(left.forwarded) === JSON.stringify(right.forwarded)
     && left.quote?.sender === right.quote?.sender && left.quote?.text === right.quote?.text
 }
 
-const ChatMessages = memo(function ChatMessages({ conversation, accountName, accountAvatar }: { conversation: SyncConversation; accountName: string; accountAvatar?: string }) {
-  return <><div className="daydiv"><span>{conversation.day}</span></div>{conversation.messages.map((message, index) => {
+const ChatMessages = memo(function ChatMessages({ conversation, accountName, accountAvatar, monitorRoom, root }: { conversation: SyncConversation; accountName: string; accountAvatar?: string; monitorRoom?: MonitorRoom; root?: string }) {
+  return <><div className="daydiv"><span>{conversation.day}</span></div>{retainedRecallMessages(conversation.messages, monitorRoom).map((message) => {
     const senderName = message.sender || (message.from === 'me' ? accountName : conversation.name)
     const avatar = message.from === 'me' ? accountAvatar : message.avatar ?? (conversation.type === 'group' ? undefined : conversation.avatar)
-    return <div className={`mrow${message.from === 'me' ? ' me' : ''}`} key={`${conversation.id}:${message.id}:${index}`}>
-      <ProfileAvatar name={senderName} avatar={avatar} className="av" /><div>
+    return <div className={`mrow${message.from === 'me' ? ' me' : ''}`} key={`${conversation.id}:${message.id}`} data-message-id={message.id}>
+      <ProfileAvatar name={senderName} avatar={avatar} className="av" /><div className="message-body">
         {(message.from === 'me' || Boolean(message.sender)) && <div className="sender"><SafeText>{senderName}</SafeText></div>}
-        <div className="bubble"><MessageContent message={message} /></div>
-      </div><div className="tm">{message.time}</div>
+        <div className="message-line"><div className="bubble"><MessageContent message={message} root={root} conversationId={conversation.id} /></div><div className="tm">{message.time}</div></div>
+      </div>
     </div>
   })}</>
-}, (left, right) => left.accountName === right.accountName && left.accountAvatar === right.accountAvatar && left.conversation.id === right.conversation.id && left.conversation.name === right.conversation.name && left.conversation.avatar === right.conversation.avatar && left.conversation.day === right.conversation.day && left.conversation.messages.length === right.conversation.messages.length && left.conversation.messages.every((message, index) => sameMessage(message, right.conversation.messages[index])))
+}, (left, right) => left.root === right.root && left.monitorRoom === right.monitorRoom && left.accountName === right.accountName && left.accountAvatar === right.accountAvatar && left.conversation.id === right.conversation.id && left.conversation.name === right.conversation.name && left.conversation.avatar === right.conversation.avatar && left.conversation.day === right.conversation.day && left.conversation.messages.length === right.conversation.messages.length && left.conversation.messages.every((message, index) => sameMessage(message, right.conversation.messages[index])))
 
 function Field({ title, hint, required = false, children }: { title: string; hint?: string; required?: boolean; children: ReactNode }) {
   const hintId = useId()
@@ -222,7 +258,7 @@ function ModelConfigEditor({
 
   return (
     <div className="group">
-      <Field title="配置名称" hint="用于后续选择模型"><input className="inp" value={name} onChange={event => setName(event.target.value)} placeholder="例如：日常总结模型" /></Field>
+      <Field title="配置名称" hint="用于后续选择模型"><Input className="inp" value={name} onChange={event => setName(event.target.value)} placeholder="例如：日常总结模型" /></Field>
       {kind === 'speech' && <Field title="模型来源" hint="本地模型需要指定模型文件所在目录">
         <select className="inp provider" value={source} onChange={event => changeSource(event.target.value as ModelSource)}><option value="remote">在线服务</option><option value="local">本地模型</option></select>
       </Field>}
@@ -235,20 +271,20 @@ function ModelConfigEditor({
         <Field title="接口格式" hint="默认 OpenAI">
           <select className="inp provider" value={apiFormat} onChange={event => applyPreset(provider, event.target.value as ApiFormat)}><option value="openai">base_url (OpenAI)</option><option value="anthropic">base_url (Anthropic)</option></select>
         </Field>
-        <Field title="Base URL" hint={apiFormat === 'anthropic' ? 'Anthropic 兼容地址，不含 /messages' : 'OpenAI 兼容地址，不含 /chat/completions'}><input className="inp" value={baseUrl} onChange={event => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" spellCheck={false} /></Field>
+        <Field title="Base URL" hint={apiFormat === 'anthropic' ? 'Anthropic 兼容地址，不含 /messages' : 'OpenAI 兼容地址，不含 /chat/completions'}><Input className="inp" value={baseUrl} onChange={event => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" spellCheck={false} /></Field>
       </> : <Field title="模型目录" hint="选择包含本地模型文件的目录">
-        <input className="inp" value={localPath} onChange={event => setLocalPath(event.target.value)} placeholder="/path/to/speech-model" spellCheck={false} />
-        <button type="button" className="btn sm" onClick={() => void window.wetrace.selectDirectory('选择本地语音模型目录').then(directory => { if (directory) setLocalPath(directory) }).catch(() => undefined)}><FolderOpen size={13} />选择目录</button>
+        <Input className="inp" value={localPath} onChange={event => setLocalPath(event.target.value)} placeholder="/path/to/speech-model" spellCheck={false} />
+        <ActionButton type="button" className="btn sm" onClick={() => void window.wetrace.selectDirectory('选择本地语音模型目录').then(directory => { if (directory) setLocalPath(directory) }).catch(() => undefined)}><FolderOpen size={13} />选择目录</ActionButton>
       </Field>}
-      <Field title={source === 'local' ? '模型名称' : '模型 ID'} hint={source === 'local' ? '例如 SenseVoice Small INT8' : '支持填写任意服务商提供的模型 ID'}><input className="inp" value={modelName} onChange={event => setModelName(event.target.value)} placeholder={source === 'local' ? 'SenseVoice Small INT8' : kind === 'text' ? 'deepseek-chat' : '填写图片模型 ID'} spellCheck={false} /></Field>
+      <Field title={source === 'local' ? '模型名称' : '模型 ID'} hint={source === 'local' ? '例如 SenseVoice Small INT8' : '支持填写任意服务商提供的模型 ID'}><Input className="inp" value={modelName} onChange={event => setModelName(event.target.value)} placeholder={source === 'local' ? 'SenseVoice Small INT8' : kind === 'text' ? 'deepseek-chat' : '填写图片模型 ID'} spellCheck={false} /></Field>
       {source === 'remote' && <Field title="API Key" hint="加密保存在本机">
-        <input className="inp" type="password" value={apiKey} placeholder={config.hasApiKey ? '已保存；留空则保持原密钥' : '输入 API Key'} onChange={event => setApiKey(event.target.value)} autoComplete="off" />
-        <button type="button" className="btn sm" disabled={saving || testingId !== null} onClick={() => void onTest(input(), editorTestingId)}>{testingId === editorTestingId ? '测试中…' : '测试连接'}</button>
+        <Input className="inp" type="password" value={apiKey} placeholder={config.hasApiKey ? '已保存；留空则保持原密钥' : '输入 API Key'} onChange={event => setApiKey(event.target.value)} autoComplete="off" />
+        <ActionButton type="button" className="btn sm" disabled={saving || testingId !== null} onClick={() => void onTest(input(), editorTestingId)}>{testingId === editorTestingId ? '测试中…' : '测试连接'}</ActionButton>
       </Field>}
       <Field title="保存配置" hint="更新当前模型">
-        {source === 'local' && <button type="button" className="btn sm" disabled={saving || testingId !== null} onClick={() => void onTest(input(), editorTestingId)}>{testingId === editorTestingId ? '检测中…' : '检测目录'}</button>}
-        <button type="button" className="btn sm" disabled={saving} onClick={onCancel}>取消</button>
-        <button type="button" className="btn sm primary" disabled={saving || testingId !== null} onClick={() => void onSave(input())}>{saving ? '保存中…' : '保存修改'}</button>
+        {source === 'local' && <ActionButton type="button" className="btn sm" disabled={saving || testingId !== null} onClick={() => void onTest(input(), editorTestingId)}>{testingId === editorTestingId ? '检测中…' : '检测目录'}</ActionButton>}
+        <ActionButton type="button" className="btn sm" disabled={saving} onClick={onCancel}>取消</ActionButton>
+        <ActionButton type="button" className="btn sm primary" disabled={saving || testingId !== null} onClick={() => void onSave(input())}>{saving ? '保存中…' : '保存修改'}</ActionButton>
       </Field>
     </div>
   )
@@ -344,7 +380,7 @@ function SipGuide({
           </ol>
           <div className="code-row">
             <code>csrutil disable</code>
-            <button
+            <ActionButton
               type="button"
               className="btn sm"
               onClick={() => {
@@ -352,13 +388,13 @@ function SipGuide({
               }}
             >
               复制命令
-            </button>
+            </ActionButton>
           </div>
           <p className="modal-foot">重启回到桌面后，让微信停在未登录页面，先启动监听，再登录微信。</p>
         </div>
         <div className="modal-actions">
-          <button type="button" className="btn" onClick={onClose}>稍后再说</button>
-          <button type="button" className="btn primary" onClick={onRetry}>我已关闭，重新检测</button>
+          <ActionButton type="button" className="btn" onClick={onClose}>稍后再说</ActionButton>
+          <ActionButton type="button" className="btn primary" onClick={onRetry}>我已关闭，重新检测</ActionButton>
         </div>
       </div>
     </div>
@@ -415,6 +451,8 @@ function LoginFlow({
     return () => window.clearInterval(timer)
   }, [capturing])
 
+  if (status?.supported === false) return <main className="login"><section className="login-card" aria-label="连接本机微信"><h3>当前环境暂不支持</h3><p role="alert">{status.error || '当前平台暂不支持连接微信'}</p><ActionButton className="btn" onClick={onRefresh} disabled={refreshing}>重新检查</ActionButton></section></main>
+
   return (
     <main className="login">
       <div className="login-glow" />
@@ -424,7 +462,7 @@ function LoginFlow({
           <h1>先把聊天记录<br /><span>安全地留在本机</span></h1>
           <p>WeTrace 读取你电脑上的微信数据，在本机解密并展示最近的会话消息。原始消息不会上传到任何服务器。</p>
           <ul>
-            <li><b>只读</b><span>不改写微信数据库，不发送任何消息</span></li>
+            <li><b>只读</b><span>数据读取不改写微信数据库</span></li>
             <li><b>本地</b><span>当前读取结果只保留在本次应用会话中</span></li>
             <li><b>可控</b><span>只有你配置的模型服务会收到文本片段</span></li>
           </ul>
@@ -471,15 +509,15 @@ function LoginFlow({
                 <div className="wnote warn">
                   <b>需要手动关闭</b>
                   <span>按教程操作并重启后，回到这里点击「重新检测」确认结果。</span>
-                  <button type="button" className="btn sm" onClick={onOpenSipGuide}>查看恢复模式教程</button>
+                  <ActionButton type="button" className="btn sm" onClick={onOpenSipGuide}>查看恢复模式教程</ActionButton>
                 </div>
               )}
               <div className="wstep-actions">
-                <button type="button" className="btn" disabled={refreshing} onClick={onRefresh}>
+                <ActionButton type="button" className="btn" disabled={refreshing} onClick={onRefresh}>
                   <RefreshCw size={13} className={refreshing ? 'spin' : undefined} />
                   {refreshing ? '检测中' : '重新检测'}
-                </button>
-                <button type="button" className="btn primary" disabled={!sipDone} onClick={() => onStep(1)}>下一步</button>
+                </ActionButton>
+                <ActionButton type="button" className="btn primary" disabled={!sipDone} onClick={() => onStep(1)}>下一步</ActionButton>
               </div>
             </div>
           )}
@@ -528,12 +566,12 @@ function LoginFlow({
                 </div>
               )}
               <div className="wstep-actions">
-                <button type="button" className="btn" onClick={() => onStep(0)}>上一步</button>
-                <button type="button" className="btn" disabled={refreshing} onClick={onRefresh}>
+                <ActionButton type="button" className="btn" onClick={() => onStep(0)}>上一步</ActionButton>
+                <ActionButton type="button" className="btn" disabled={refreshing} onClick={onRefresh}>
                   <RefreshCw size={13} className={refreshing ? 'spin' : undefined} />
                   {refreshing ? '检测中' : '重新检测'}
-                </button>
-                <button type="button" className="btn primary" disabled={!wechatReady} onClick={() => onStep(2)}>下一步</button>
+                </ActionButton>
+                <ActionButton type="button" className="btn primary" disabled={!wechatReady} onClick={() => onStep(2)}>下一步</ActionButton>
               </div>
             </div>
           )}
@@ -598,13 +636,13 @@ function LoginFlow({
               )}
               {keyError && <div className="login-msg error">{keyError}</div>}
               <div className="wstep-actions">
-                <button type="button" className="btn" disabled={capturing} onClick={() => onStep(1)}>上一步</button>
+                <ActionButton type="button" className="btn" disabled={capturing} onClick={() => onStep(1)}>上一步</ActionButton>
                 {hasKey ? (
-                  <button type="button" className="btn primary" onClick={() => onStep(3)}>下一步</button>
+                  <ActionButton type="button" className="btn primary" onClick={() => onStep(3)}>下一步</ActionButton>
                 ) : (
-                  <button type="button" className="btn primary" disabled={capturing} onClick={onStartListening}>
+                  <ActionButton type="button" className="btn primary" disabled={capturing} onClick={onStartListening}>
                     {captureStage === 'listening' ? '正在启动监听…' : captureStage === 'ready' ? '等待微信登录…' : '开始监听'}
-                  </button>
+                  </ActionButton>
                 )}
               </div>
             </div>
@@ -636,10 +674,10 @@ function LoginFlow({
                 {error || detected?.error || message || '点击下方按钮开始同步。'}
               </div>
               <div className="wstep-actions">
-                <button type="button" className="btn" disabled={syncing} onClick={() => onStep(2)}>上一步</button>
-                <button type="button" className="btn primary" disabled={syncing || !hasKey} onClick={onSync}>
+                <ActionButton type="button" className="btn" disabled={syncing} onClick={() => onStep(2)}>上一步</ActionButton>
+                <ActionButton type="button" className="btn primary" disabled={syncing || !hasKey} onClick={onSync}>
                   {syncing ? '正在同步…' : '开始同步并进入'}
-                </button>
+                </ActionButton>
               </div>
             </div>
           )}
@@ -655,9 +693,9 @@ function LoginFlow({
 
 export default function App() {
   const [entered, setEntered] = useState(false)
+  const [monitorData, setMonitorData] = useState<{ root: string; state: MonitorState }>()
   const [view, setView] = useState<View>('messages')
   const [aiLaunch, setAiLaunch] = useState<AiConversationLaunch>()
-  const [aiBusy, setAiBusy] = useState(false)
   const [patternConversation, setPatternConversation] = useState<SyncConversation | null>(null)
   const [speechConversation, setSpeechConversation] = useState<SyncConversation | null>(null)
   const [settingsPanel, setSettingsPanel] = useState<SettingsPanel>('db')
@@ -679,6 +717,23 @@ export default function App() {
   const [rootDir, setRootDir] = useState<string | null>(() => window.localStorage.getItem('wetrace:selected-account-root'))
   const [accounts, setAccounts] = useState<WechatAccount[]>([])
   const [profileOpen, setProfileOpen] = useState(false)
+  const profileButton = useRef<HTMLButtonElement>(null)
+  const profilePopover = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!profileOpen) return
+    const dismissOutside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !profileButton.current?.contains(event.target) && !profilePopover.current?.contains(event.target)) setProfileOpen(false)
+    }
+    const dismissOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { setProfileOpen(false); profileButton.current?.focus() }
+    }
+    document.addEventListener('pointerdown', dismissOutside, true)
+    document.addEventListener('keydown', dismissOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', dismissOutside, true)
+      document.removeEventListener('keydown', dismissOnEscape)
+    }
+  }, [profileOpen])
   const [autoSyncError, setAutoSyncError] = useState('')
   const [mediaCacheStats, setMediaCacheStats] = useState<import('../../shared/media-cache').MediaCacheStats | null>(null)
   const [mediaCacheError, setMediaCacheError] = useState('')
@@ -746,11 +801,18 @@ export default function App() {
   const [appPlatform, setAppPlatform] = useState('')
   const searchRef = useRef<HTMLInputElement>(null)
   const chatScrollRef = useRef<HTMLDivElement>(null)
+  const chatContentRef = useRef<HTMLDivElement>(null)
+  const followChatBottom = useRef(true)
+  const previousChatScrollTop = useRef(0)
+  const historyAnchor = useRef<{ key: string; id?: string; offset: number; top: number; height: number } | null>(null)
   const stepInited = useRef(false)
   const startupSyncStarted = useRef(false)
   const [refreshingConversation, setRefreshingConversation] = useState(false)
   const conversationRefreshInFlight = useRef(false)
   const syncInFlightRoots = useRef(new Set<string>())
+  const syncAgainRoots = useRef(new Set<string>())
+  const activeAccountRootRef = useRef(real?.account.root)
+  activeAccountRootRef.current = real?.account.root
   const activeRootRef = useRef(rootDir)
   const syncGeneration = useRef(0)
   const indexedConversationRef = useRef<{ root: string; conversation: SyncConversation; at?: number } | null>(null)
@@ -1110,8 +1172,11 @@ export default function App() {
     let debounce: number | undefined
     const unsubscribe = window.wetrace.onDatabaseChanged((changedRoot) => {
       if (changedRoot !== accountRoot) return
+      // Capture the first visible state before a quick recall can replace/delete it.
+      void doSync(accountRoot, true)
       window.clearTimeout(debounce)
-      debounce = window.setTimeout(() => void doSync(accountRoot, true), 1200)
+      // WAL notifications can precede commit; verify once more after the burst settles.
+      debounce = window.setTimeout(() => void doSync(accountRoot, true), 150)
     })
     void window.wetrace.watchWechatAccount(accountRoot).catch(() => undefined)
     return () => {
@@ -1163,10 +1228,51 @@ export default function App() {
     return () => document.removeEventListener('keydown', handleKeydown)
   }, [entered])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (view !== 'messages' || !entered) return
+    const element = chatScrollRef.current, content = chatContentRef.current
+    if (!element || !content) return
+    followChatBottom.current = true
+    historyAnchor.current = null
+    const scrollToLatest = () => {
+      const anchor = historyAnchor.current
+      if (anchor?.key === currentConversationKey.current && !followChatBottom.current) {
+        const row = Array.from(element.querySelectorAll<HTMLElement>('[data-message-id]')).find(row => row.dataset.messageId === anchor.id)
+        if (row) {
+          element.scrollTop += row.getBoundingClientRect().top - element.getBoundingClientRect().top - anchor.offset
+          previousChatScrollTop.current = element.scrollTop
+        }
+      }
+      if (followChatBottom.current && !historyRequest.current) element.scrollTop = element.scrollHeight
+    }
+    const onScroll = () => {
+      followChatBottom.current = element.scrollHeight - element.clientHeight - element.scrollTop <= 48
+    }
+    scrollToLatest()
+    previousChatScrollTop.current = element.scrollTop
+    element.addEventListener('scroll', onScroll, { passive: true })
+    // Images and deferred message layout can change height after the message update.
+    const observer = new ResizeObserver(scrollToLatest)
+    observer.observe(content)
+    observer.observe(element)
+    const frame = requestAnimationFrame(scrollToLatest)
+    return () => { cancelAnimationFrame(frame); observer.disconnect(); element.removeEventListener('scroll', onScroll) }
+  }, [view, entered, rootDir, selected?.id])
+
+  useLayoutEffect(() => {
     const element = chatScrollRef.current
-    if (element) element.scrollTop = element.scrollHeight
-  }, [selected?.id])
+    const anchor = historyAnchor.current
+    if (element && anchor?.key === currentConversationKey.current) {
+      const row = Array.from(element.querySelectorAll<HTMLElement>('[data-message-id]')).find(row => row.dataset.messageId === anchor.id)
+      element.scrollTop = row ? element.scrollTop + row.getBoundingClientRect().top - element.getBoundingClientRect().top - anchor.offset : anchor.top + element.scrollHeight - anchor.height
+      previousChatScrollTop.current = element.scrollTop
+    }
+  }, [selected?.messages])
+
+  useLayoutEffect(() => {
+    const element = chatScrollRef.current
+    if (view === 'messages' && element && followChatBottom.current && !historyRequest.current) element.scrollTop = element.scrollHeight
+  }, [view, selected?.messages])
 
   async function selectDirectory() {
     try {
@@ -1246,6 +1352,7 @@ export default function App() {
       const response = await window.wetrace.getIndexedConversation({ root, conversationId: selected.id, limit: 60, refresh: true })
       if (generation !== syncGeneration.current || currentConversationKey.current !== requestKey) return
       if (!response.ok) throw new Error(response.error)
+      followChatBottom.current = true
       const conversation = { ...selected, ...response.conversation, avatar: response.conversation.avatar ?? selected.avatar }
       indexedConversationRef.current = { root, conversation }
       setReal(current => current?.account.root === root ? { ...current, conversations: [conversation, ...current.conversations.filter(item => item.id !== conversation.id)] } : current)
@@ -1265,8 +1372,9 @@ export default function App() {
   }
 
   async function loadEarlierMessages() {
-    if (!selected || historyRequest.current || conversationRefreshInFlight.current) return
+    if (!selected || historyRequest.current || conversationRefreshInFlight.current || historyEndKey === conversationSummaryKey || indexedSummary?.data && selected.messages.length >= indexedSummary.data.total) return
     historyRequest.current = true
+    followChatBottom.current = false
     setLoadingHistory(true)
     const requestKey = conversationSummaryKey
     const root = real?.account.root ?? rootDir ?? undefined
@@ -1274,20 +1382,18 @@ export default function App() {
     const historical = indexedConversationRef.current
     const at = historical && historical.root === root && historical.conversation.id === selected.id ? historical.at : undefined
     const element = chatScrollRef.current
-    const height = element?.scrollHeight ?? 0
-    const top = element?.scrollTop ?? 0
     try {
       const response = await window.wetrace.getIndexedConversation({ root, conversationId: selected.id, at, limit: selected.messages.length + 60 })
       if (generation !== syncGeneration.current || currentConversationKey.current !== requestKey) return
       if (!response.ok) throw new Error(response.error)
+      const height = element?.scrollHeight ?? 0
+      const top = element?.scrollTop ?? 0
+      const row = element && Array.from(element.querySelectorAll<HTMLElement>('[data-message-id]')).find(row => row.getBoundingClientRect().bottom > element.getBoundingClientRect().top)
+      historyAnchor.current = { key: requestKey, id: row?.dataset.messageId, offset: row && element ? row.getBoundingClientRect().top - element.getBoundingClientRect().top : 0, top, height }
       const conversation = { ...selected, ...response.conversation, avatar: response.conversation.avatar ?? selected.avatar }
       if (root) indexedConversationRef.current = { root, conversation, at }
       setReal(current => current && current.account.root === root ? { ...current, conversations: current.conversations.map(item => item.id === conversation.id ? conversation : item) } : current)
       if (conversation.messages.length < selected.messages.length + 60) setHistoryEndKey(requestKey)
-      if (conversation.messages.length === selected.messages.length) notify('没有更早的记录了')
-      requestAnimationFrame(() => {
-        if (element && currentConversationKey.current === requestKey) element.scrollTop = top + element.scrollHeight - height
-      })
     } catch (error) {
       if (currentConversationKey.current === requestKey) notify(error instanceof Error ? error.message : '加载历史消息失败')
     } finally {
@@ -1391,9 +1497,15 @@ export default function App() {
   }
 
   async function doSync(root = rootDir ?? undefined, silent = false) {
-    const syncRoot = root ?? 'default'
+    const directoryAtStart = activeRootRef.current
+    const accountAtStart = activeAccountRootRef.current
+    if (root && accountAtStart && root !== directoryAtStart && root !== accountAtStart) return
+    const syncRoot = root ?? accountAtStart ?? 'default'
     const generation = syncGeneration.current
-    if (syncInFlightRoots.current.has(syncRoot)) return
+    if (syncInFlightRoots.current.has(syncRoot)) {
+      if (silent) syncAgainRoots.current.add(syncRoot)
+      return
+    }
     syncInFlightRoots.current.add(syncRoot)
     if (!silent) {
       setSyncing(true)
@@ -1402,7 +1514,7 @@ export default function App() {
     }
     try {
       const response = await window.wetrace.syncWechat(root)
-      if (generation !== syncGeneration.current || (root ?? null) !== activeRootRef.current) return
+      if (generation !== syncGeneration.current || directoryAtStart !== activeRootRef.current || accountAtStart !== activeAccountRootRef.current) return
       if (!response.ok) {
         if (silent) setAutoSyncError(response.error)
         else {
@@ -1423,7 +1535,9 @@ export default function App() {
       }
     } finally {
       syncInFlightRoots.current.delete(syncRoot)
+      const again = syncAgainRoots.current.delete(syncRoot)
       if (!silent) setSyncing(false)
+      if (again && generation === syncGeneration.current && directoryAtStart === activeRootRef.current) void doSync(root, true)
     }
   }
 
@@ -1587,7 +1701,7 @@ export default function App() {
             void refreshStatus()
           }}
         />
-        {toast && <div className="toast" role="status">{toast}</div>}
+        {toast && <Alert className="toast" role="status" type="info" showIcon title={toast} />}
       </>
     )
   }
@@ -1599,8 +1713,9 @@ export default function App() {
         {([
           { id: 'messages' as View, label: '消息', icon: MessageCircle },
           { id: 'ai' as View, label: 'AI 对话', icon: Sparkles },
+          { id: 'monitor' as View, label: '群聊监控', icon: ShieldCheck },
+          { id: 'send' as View, label: '定时发送', icon: MessageCircle },
           { id: 'summary' as View, label: '总结', icon: FileText },
-          { id: 'guide' as View, label: '引导', icon: Compass },
           { id: 'settings' as View, label: '设置', icon: Settings2 },
         ]).map(({ id, label, icon: Icon }) => (
           <button
@@ -1613,12 +1728,13 @@ export default function App() {
           >
             <Icon size={19} strokeWidth={1.7} />
             {id === 'messages' && <span className="dot" />}
-            <span className="tip">{label}</span>
+            <span className="tip">{id === 'monitor' ? '监控' : label}</span>
           </button>
         ))}
         <div className="spacer" />
         <button
           type="button"
+          ref={profileButton}
           className="rbtn account-profile-button"
           aria-label={`我的账号：${accountName}，${dataStatusText}`}
           aria-expanded={profileOpen}
@@ -1633,19 +1749,21 @@ export default function App() {
           </span><span className="tip"><SafeText>{accountName}</SafeText></span>
         </button>
         {profileOpen && (
-          <div className="profile-popover" role="dialog" aria-label="当前账号状态">
+          <div ref={profilePopover} className="profile-popover" role="dialog" aria-label="当前账号状态">
             <div className="profile-popover-head"><ProfileAvatar name={accountName} avatar={account?.avatar} className="me" /><div><b><SafeText>{accountName}</SafeText></b><span>{account?.wxid ?? '未连接微信'}</span></div></div>
             <div className="profile-popover-row"><span>数据库密钥</span><b>{detected?.hasKey ? '可用' : '未获取'}</b></div>
             <div className="profile-popover-row"><span>聊天记录</span><b>{autoSyncError ? '刷新失败' : real ? '可读取' : '未同步'}</b></div>
             {autoSyncError && <p className="profile-popover-error">{autoSyncError}</p>}
             <p className="profile-popover-note">{real ? `最近刷新 ${new Date(real.syncedAt).toLocaleTimeString('zh-CN')} · 监听变化并每 20 秒检查` : '进入消息页后自动刷新本地记录'}</p>
-            <button type="button" className="btn sm" onClick={() => { setProfileOpen(false); openSettings('db') }}>账号与同步设置</button>
+            <ActionButton type="button" className="btn sm" onClick={() => { setProfileOpen(false); openSettings('db') }}>账号与同步设置</ActionButton>
           </div>
         )}
       </aside>
 
       <div className="workspace">
-        <div style={{ display: view === 'ai' ? 'contents' : 'none' }}><AiChat key={real?.account.root ?? 'none'} root={real?.account.root} conversations={real?.conversations ?? []} models={modelConfigs} launch={aiLaunch} onBusyChange={setAiBusy} onSettings={() => openSettings('model')} /></div>
+        {real?.account.root && <ScheduledMessagesPanel key={'send-' + real.account.root} root={real.account.root} visible={view === 'send'} />}
+        {real?.account.root && <GroupMonitor conversations={real.conversations} key={real.account.root} root={real.account.root} visible={view === 'monitor'} onStateChange={(root, state) => setMonitorData({ root, state })} />}
+        <div style={{ display: view === 'ai' ? 'contents' : 'none' }}><AiChat key={real?.account.root ?? 'none'} root={real?.account.root} conversations={real?.conversations ?? []} models={modelConfigs} launch={aiLaunch} onSettings={() => openSettings('model')} /></div>
         {view === 'messages' && (
           <section className="view active" aria-label="消息">
             <div className="msg-layout">
@@ -1655,6 +1773,7 @@ export default function App() {
                     <h2>消息</h2>
                     <span className="sync">{autoSyncError ? '自动刷新失败' : real ? `${real.messageTotal.toLocaleString('en-US')} 条 · 自动同步` : '未同步'}</span>
                   </div>
+                  {real?.monitorWarning && <Alert type="warning" showIcon title="部分本地缓存暂不可用" description={real.monitorWarning} />}
                   <label className="search">
                     <Search size={15} strokeWidth={1.8} />
                     <input
@@ -1724,7 +1843,7 @@ export default function App() {
                       }</div>
                   </div>
                   <div className="ops">
-                    <button type="button" className="speech-entry" disabled={aiBusy || !real?.account.root} title="关联当前会话，发送问题后按需查询聊天记录" onClick={() => {
+                    <button type="button" className="speech-entry" disabled={!real?.account.root} title="关联当前会话，发送问题后按需查询聊天记录" onClick={() => {
                       setAiLaunch({ id: crypto.randomUUID(), root: real!.account.root, context: conversationAiContext(selected) })
                       setView('ai')
                     }}><Sparkles size={14} />问 AI</button>
@@ -1734,16 +1853,24 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="chat-scroll" ref={chatScrollRef}>
+                <div className="chat-scroll" ref={chatScrollRef} onScroll={event => {
+                  const element = event.currentTarget
+                  if (element.scrollTop !== previousChatScrollTop.current) historyAnchor.current = null
+                  const movingUp = element.scrollTop < previousChatScrollTop.current
+                  previousChatScrollTop.current = element.scrollTop
+                  if (movingUp && element.scrollTop <= 240) void loadEarlierMessages()
+                }}>
+                  <div className="chat-scroll-content" ref={chatContentRef}>
                   <div className="chat-history-control">{historyEndKey !== conversationSummaryKey && (!indexedSummary?.data || selected.messages.length < indexedSummary.data.total)
-                    ? <button type="button" className="btn sm" disabled={loadingHistory} onClick={loadEarlierMessages}>{loadingHistory ? '正在加载…' : '加载更早消息'}</button>
+                    ? <span role="status">{loadingHistory ? '正在加载更早消息…' : '向上滚动查看更早消息'}</span>
                     : <span>没有更早的记录了</span>}</div>
-                  {chatPicking ? <ReportMessagePicker key={`${rootDir}:${selected.id}`} conversation={selected} accountName={accountName} selected={chatPicks} onChange={setChatPicks} renderContent={message => <MessageContent message={message} />} /> : <ChatMessages conversation={selected} accountName={accountName} accountAvatar={account?.avatar} />}
+                  {chatPicking ? <ReportMessagePicker key={`${rootDir}:${selected.id}`} conversation={selected} accountName={accountName} selected={chatPicks} onChange={setChatPicks} renderContent={message => <MessageContent message={message} root={real?.account.root} />} /> : <ChatMessages root={real?.account.root} conversation={selected} accountName={accountName} accountAvatar={account?.avatar} monitorRoom={monitorData?.root === real?.account.root ? monitorData?.state.rooms.find(room => room.id === selected.id) : undefined} />}
+                  </div>
                 </div>
 
-                {chatPicking && <div className="report-selection-bar"><b>已选 {chatPicks.length} 条消息</b><span>只总结所选内容</span><button type="button" className="btn sm" onClick={() => { setChatPicking(false); setChatPicks([]) }}>取消</button><button type="button" className="btn sm primary" disabled={!chatPicks.length || reportRunning} onClick={openSelectedReport}>生成所选消息报告</button></div>}
+                {chatPicking && <div className="report-selection-bar"><b>已选 {chatPicks.length} 条消息</b><span>只总结所选内容</span><ActionButton type="button" className="btn sm" onClick={() => { setChatPicking(false); setChatPicks([]) }}>取消</ActionButton><ActionButton type="button" className="btn sm primary" disabled={!chatPicks.length || reportRunning} onClick={openSelectedReport}>生成所选消息报告</ActionButton></div>}
                 <div className="composer">
-                  <div className="box">只读模式 · WeTrace 不会发送任何消息</div>
+                  <div className="box">聊天记录只读 · 发送任务在独立入口管理</div>
                   <div className="hint"><span>{`${indexedSummary?.data ? `共 ${indexedSummary.data.total.toLocaleString('en-US')} 条本地记录 · ` : ''}已展示 ${selected.messages.length} 条`}</span><span>⌘K 搜索 · ⌘, 设置</span></div>
                 </div>
                 </> : <div className="empty-search">这个分组暂时没有会话</div>}
@@ -1783,7 +1910,7 @@ export default function App() {
               <div className="page summary-page">
                 <div className="page-head">
                   <div><button type="button" className="page-back" onClick={() => setSummaryPanel('home')}><ArrowLeft size={14} />总结</button><h2>报告模板</h2><p>系统内置展示模板；模板决定排版，报告内容由风格控制。</p></div>
-                  <button type="button" className="btn primary" onClick={() => openReportGenerator()}><FileText size={14} />生成报告</button>
+                  <ActionButton type="button" className="btn primary" onClick={() => openReportGenerator()}><FileText size={14} />生成报告</ActionButton>
                 </div>
                 <div className="template-list">
                   {defaultReportTemplates.map(template => (
@@ -1795,7 +1922,7 @@ export default function App() {
                           {template.features.map(section => <span key={section}>{section}</span>)}
                         </div>
                       </div>
-                      <button type="button" className="btn sm" onClick={() => setSummaryPanel('example')}>查看示例 <ArrowRight size={13} /></button>
+                      <ActionButton type="button" className="btn sm" onClick={() => setSummaryPanel('example')}>查看示例 <ArrowRight size={13} /></ActionButton>
                     </article>
                   ))}
                 </div>
@@ -1848,14 +1975,14 @@ export default function App() {
                     <div className="report-config-head"><div><span>REPORT WORKSPACE</span><h2>报告配置</h2><p>选择会话与分析范围，右侧独立展示生成任务。</p></div><FileText size={24} strokeWidth={1.5} /></div>
                     {reportRunning && reportTask && <div className="report-editing-notice"><span className="report-task-dot" /><span>正在为 <b><SafeText>{reportTask.conversationName}</SafeText></b> 生成报告。这里可以继续调整配置，当前任务按提交时的设置处理。</span></div>}
                     {reportConversation ? <div className="report-selected"><ProfileAvatar name={reportConversation.name} avatar={reportConversation.avatar} className="av" /><div><b><SafeText>{reportConversation.name}</SafeText></b><span>{reportConversation.type === 'group' ? '群聊' : '联系人'} · 从本地索引选择，生成时按范围读取正文</span></div><Check size={16} /></div> : <div className="report-selected empty">请先在左侧选择一个会话</div>}
-                    {selectedReportScope && <div className="report-selected-scope"><b>仅总结已选消息 · {reportSnapshot?.key === reportSnapshotKey ? reportSnapshot.data.messages.length : selectedReportScope.items.length} 条</b><p>不自动添加其他消息或上下文；合并转发使用内部发言人。可通过内容类型进一步筛选。</p><button type="button" className="btn sm" onClick={() => { setSelectedId(selectedReportScope.conversationId); setChatPicking(true); setView('messages') }}>返回调整选择</button><button type="button" className="btn sm" onClick={() => { setReportScope(null); setReportSelectionVersion(version => version + 1) }}>改为按会话总结</button></div>}
+                    {selectedReportScope && <div className="report-selected-scope"><b>仅总结已选消息 · {reportSnapshot?.key === reportSnapshotKey ? reportSnapshot.data.messages.length : selectedReportScope.items.length} 条</b><p>不自动添加其他消息或上下文；合并转发使用内部发言人。可通过内容类型进一步筛选。</p><ActionButton type="button" className="btn sm" onClick={() => { setSelectedId(selectedReportScope.conversationId); setChatPicking(true); setView('messages') }}>返回调整选择</ActionButton><ActionButton type="button" className="btn sm" onClick={() => { setReportScope(null); setReportSelectionVersion(version => version + 1) }}>改为按会话总结</ActionButton></div>}
                     <div className="group report-form">
                       <Field title="统计时间" hint="选择快捷日期或自定义时间范围">
                         <div className="report-date-control">
                           <div className="chips report-date-presets" aria-label="报告快捷日期" hidden={!!selectedReportScope}>
                             {reportDatePresets.map(item => <button type="button" key={item.id} className={`chip${reportDatePreset === item.id ? ' on' : ''}`} aria-pressed={reportDatePreset === item.id} onClick={() => selectReportDatePreset(item.id)}>{item.label}</button>)}
                           </div>
-                          {selectedReportScope ? <span className="report-selection-dates">{reportStartDate} 至 {reportEndDate} · 按所选消息确定</span> : reportDatePreset === 'custom' && <div className="date-range"><input className="inp" type="date" aria-label="报告开始日期" value={reportStartDate} max={reportEndDate} onChange={event => { setReportStartDate(event.target.value); setReportDatePreset('custom') }} /><span>至</span><input className="inp" type="date" aria-label="报告结束日期" value={reportEndDate} min={reportStartDate} max={toDateInput(new Date())} onChange={event => { setReportEndDate(event.target.value); setReportDatePreset('custom') }} /></div>}
+                          {selectedReportScope ? <span className="report-selection-dates">{reportStartDate} 至 {reportEndDate} · 按所选消息确定</span> : reportDatePreset === 'custom' && <div className="date-range"><Input className="inp" type="date" aria-label="报告开始日期" value={reportStartDate} max={reportEndDate} onChange={event => { setReportStartDate(event.target.value); setReportDatePreset('custom') }} /><span>至</span><Input className="inp" type="date" aria-label="报告结束日期" value={reportEndDate} min={reportStartDate} max={toDateInput(new Date())} onChange={event => { setReportEndDate(event.target.value); setReportDatePreset('custom') }} /></div>}
                         </div>
                       </Field>
                       <Field title="内容类型" hint={!reportConversation ? '请先选择会话' : !reportStartDate || !reportEndDate || reportStartDate > reportEndDate ? '请选择有效的日期范围' : !Object.values(reportContent).some(Boolean) ? '请至少选择一种内容类型' : reportDataLoading ? '正在读取本地索引信息…' : reportDataError ? `会话索引读取失败：${reportDataError}` : reportData ? `已从本地记录筛选，已勾选 ${reportSelectedCount} 条` : '等待读取完整记录'}>
@@ -1868,17 +1995,17 @@ export default function App() {
                           <select className="inp provider" aria-label="基础语言模型" value={reportModel?.id ?? ''} disabled={textModels.length === 0} onChange={event => setReportModelId(event.target.value)}>
                             {textModels.length === 0 ? <option value="">尚未配置基础语言模型</option> : textModels.map(config => <option key={config.id} value={config.id}>{config.name || config.model}{config.isDefault ? '（默认）' : ''}</option>)}
                           </select>
-                          {!reportModel && <button type="button" className="btn sm" onClick={() => { newModel('text'); openSettings('model') }}>去配置</button>}
+                          {!reportModel && <ActionButton type="button" className="btn sm" onClick={() => { newModel('text'); openSettings('model') }}>去配置</ActionButton>}
                         </Field>
                         <Field title="图片理解模型" hint="不默认选择，解析图片时手动选择">
                           <select className="inp provider" aria-label="图片理解模型" value={reportImageModel?.id ?? ''} disabled={imageModels.length === 0} onChange={event => setReportImageModelId(event.target.value)}>
                             <option value="">不选择</option>
                             {imageModels.map(config => <option key={config.id} value={config.id}>{config.name || config.model}</option>)}
                           </select>
-                          {imageModels.length === 0 && <button type="button" className="btn sm" onClick={() => { newModel('image'); openSettings('model') }}>去配置</button>}
+                          {imageModels.length === 0 && <ActionButton type="button" className="btn sm" onClick={() => { newModel('image'); openSettings('model') }}>去配置</ActionButton>}
                         </Field>
                         {reportImageModel && <Field title="图片解析线程数" hint={`同时处理的图片数量，1–${MAX_IMAGE_CONCURRENCY}；默认 ${DEFAULT_IMAGE_CONCURRENCY}`}>
-                          <input className="inp" type="number" aria-label="图片解析线程数" min={1} max={MAX_IMAGE_CONCURRENCY} step={1} value={reportImageConcurrency} onChange={event => setReportImageConcurrency(event.target.value)} />
+                          <Input className="inp" type="number" aria-label="图片解析线程数" min={1} max={MAX_IMAGE_CONCURRENCY} step={1} value={reportImageConcurrency} onChange={event => setReportImageConcurrency(event.target.value)} />
                         </Field>}
                       </div>
                       {reportConversation?.type === 'group' && <Field title="总结对象" hint="个人总结以该成员发言为主，结合所选范围内的群聊上下文；条数为当前日期与内容类型下的消息数。">
@@ -1898,17 +2025,17 @@ export default function App() {
                               <optgroup label="内置风格">{availableReportStyles.filter(style => style.builtin).map(style => <option key={style.id} value={style.id}>{style.name}</option>)}</optgroup>
                               {reportStyles.some(style => !style.builtin) && <optgroup label="我的风格">{reportStyles.filter(style => !style.builtin).map(style => <option key={style.id} value={style.id}>{style.name}</option>)}</optgroup>}
                             </select>
-                            {!reportStyleEditing && <button className="btn sm" type="button" disabled={reportStyleSaving} onClick={() => editReportStyle()}>新建风格</button>}
+                            {!reportStyleEditing && <ActionButton className="btn sm" type="button" disabled={reportStyleSaving} onClick={() => editReportStyle()}>新建风格</ActionButton>}
                           </div>
                           {!reportStyleEditing && selectedReportStyle && <>
                             <details className="report-style-details" key={selectedReportStyle.id}><summary>查看风格提示词</summary><p className="report-style-description">{selectedReportStyle.prompt}</p></details>
-                            <div className="report-style-actions"><button className="btn sm" type="button" disabled={reportStyleSaving} onClick={() => editReportStyle(selectedReportStyle)}>{selectedReportStyle.builtin ? '基于此风格自定义' : '编辑风格'}</button>{!selectedReportStyle.builtin && <button className="btn sm" type="button" disabled={reportStyleSaving} onClick={() => void deleteWritingStyle()}>删除风格</button>}</div>
+                            <div className="report-style-actions"><ActionButton className="btn sm" type="button" disabled={reportStyleSaving} onClick={() => editReportStyle(selectedReportStyle)}>{selectedReportStyle.builtin ? '基于此风格自定义' : '编辑风格'}</ActionButton>{!selectedReportStyle.builtin && <ActionButton className="btn sm" type="button" disabled={reportStyleSaving} onClick={() => void deleteWritingStyle()}>删除风格</ActionButton>}</div>
                           </>}
                           {reportStyleEditing && <div className="report-style-editor">
-                            <label>风格名称<input className="inp" aria-label="自定义风格名称" maxLength={40} value={reportStyleName} disabled={reportStyleSaving} onChange={event => setReportStyleName(event.target.value)} placeholder="例如：项目进展周报" /></label>
+                            <label>风格名称<Input className="inp" aria-label="自定义风格名称" maxLength={40} value={reportStyleName} disabled={reportStyleSaving} onChange={event => setReportStyleName(event.target.value)} placeholder="例如：项目进展周报" /></label>
                             <label>内容风格要求<textarea className="inp report-style-prompt" aria-label="自定义风格要求" rows={5} maxLength={3000} value={reportStyleDraft} disabled={reportStyleSaving} onChange={event => setReportStyleDraft(event.target.value)} placeholder="例如：语气正式，先总结进展，再列出明确决定、负责人和时间节点；最后说明待确认问题。" /></label>
                             <small>描述希望报告写什么、怎么写；展示效果由上方系统模板决定。</small>
-                            <div className="report-style-actions"><button className="btn sm primary" type="button" disabled={reportStyleSaving || !reportStyleName.trim() || !reportStyleDraft.trim()} onClick={() => void saveWritingStyle()}>{reportStyleSaving ? '保存中…' : '保存风格'}</button><button className="btn sm" type="button" disabled={reportStyleSaving} onClick={() => setReportStyleEditing(false)}>取消</button></div>
+                            <div className="report-style-actions"><ActionButton className="btn sm primary" type="button" disabled={reportStyleSaving || !reportStyleName.trim() || !reportStyleDraft.trim()} onClick={() => void saveWritingStyle()}>{reportStyleSaving ? '保存中…' : '保存风格'}</ActionButton><ActionButton className="btn sm" type="button" disabled={reportStyleSaving} onClick={() => setReportStyleEditing(false)}>取消</ActionButton></div>
                           </div>}
                         </div>
                       </Field>
@@ -1920,7 +2047,7 @@ export default function App() {
                       </Field>
                     </div>
                     <div className="report-template-note"><span className="template-badge">{reportTemplate.name}</span><p>{reportTemplate.description}</p><div>{reportTemplate.features.map(section => <span key={section}>{section}</span>)}</div></div>
-                    <div className="report-submit"><div><b>默认同时输出 HTML 和 PNG 两种文件</b><span>文本及语音转写发送至语言模型，图片发送至图片理解模型；视频仅统计。</span></div><button type="button" className="btn primary" disabled={reportRunning || reportStyleEditing} onClick={() => void generateReport()}><FileText size={14} />{reportRunning ? '等待当前任务完成' : '生成报告'}</button></div>
+                    <div className="report-submit"><div><b>默认同时输出 HTML 和 PNG 两种文件</b><span>文本及语音转写发送至语言模型，图片发送至图片理解模型；视频仅统计。</span></div><ActionButton type="button" className="btn primary" disabled={reportRunning || reportStyleEditing} onClick={() => void generateReport()}><FileText size={14} />{reportRunning ? '等待当前任务完成' : '生成报告'}</ActionButton></div>
                   </div>
                 </div>
                 <aside className="report-progress-panel" aria-label="报告生成进度" aria-live="polite">
@@ -1957,45 +2084,10 @@ export default function App() {
                     <p>任务编号：{reportProgress.requestId}</p>
                     {reportProgress.diagnosticPath && <button type="button" onClick={() => void window.wetrace.openReport(reportProgress.diagnosticPath!).catch(error => notify(error instanceof Error ? error.message : '打开诊断日志失败'))}>打开诊断日志</button>}
                   </div>}
-                  {generatedReport && <div className="report-output"><button className="btn primary" onClick={() => void window.wetrace.openReport(generatedReport.htmlPath).catch(error => notify(String(error)))}>打开报告</button>{generatedReport.pngPaths.map((file, index) => <button className="btn sm" key={file} onClick={() => void window.wetrace.openReport(file).catch(error => notify(String(error)))}>查看 PNG{generatedReport.pngPaths.length > 1 ? ` ${index + 1}` : ''}</button>)}<button type="button" className="btn sm" onClick={() => void window.wetrace.revealReport(generatedReport.htmlPath).catch(error => notify(error instanceof Error ? error.message : '打开文件夹失败'))}><FolderOpen size={14} />打开所在文件夹</button><button type="button" className="btn sm" onClick={() => setSummaryPanel('home')}>查看全部报告</button><small className="report-output-path">保存位置：{generatedReport.htmlPath.replace(/[\\/][^\\/]+$/, '')}</small>{generatedReport.warnings.length > 0 && <details><summary>{generatedReport.warnings.length} 条素材处理说明</summary>{generatedReport.warnings.map((warning, index) => <p key={index}>{warning}</p>)}</details>}</div>}
+                  {generatedReport && <div className="report-output"><ActionButton className="btn primary" onClick={() => void window.wetrace.openReport(generatedReport.htmlPath).catch(error => notify(String(error)))}>打开报告</ActionButton>{generatedReport.pngPaths.map((file, index) => <ActionButton className="btn sm" key={file} onClick={() => void window.wetrace.openReport(file).catch(error => notify(String(error)))}>查看 PNG{generatedReport.pngPaths.length > 1 ? ` ${index + 1}` : ''}</ActionButton>)}<ActionButton type="button" className="btn sm" onClick={() => void window.wetrace.revealReport(generatedReport.htmlPath).catch(error => notify(error instanceof Error ? error.message : '打开文件夹失败'))}><FolderOpen size={14} />打开所在文件夹</ActionButton><ActionButton type="button" className="btn sm" onClick={() => setSummaryPanel('home')}>查看全部报告</ActionButton><small className="report-output-path">保存位置：{generatedReport.htmlPath.replace(/[\\/][^\\/]+$/, '')}</small>{generatedReport.warnings.length > 0 && <details><summary>{generatedReport.warnings.length} 条素材处理说明</summary>{generatedReport.warnings.map((warning, index) => <p key={index}>{warning}</p>)}</details>}</div>}
                 </aside>
               </div>
             )}
-          </section>
-        )}
-
-        {view === 'guide' && (
-          <section className="view active" aria-label="引导">
-            <div className="page">
-              <div className="page-head">
-                <div><h2>开始使用</h2><p>三步完成初始化，之后可以在设置里调整任何一项。</p></div>
-                <button type="button" className="btn sm" onClick={() => notify('使用说明将随第一个可用版本提供')}>查看使用说明</button>
-              </div>
-              <div className="steps">
-                <article className="step">
-                  <div className="n">STEP 01</div><h3>连接微信数据</h3>
-                  <p>只读读取本机微信数据库，在当前应用会话中展示最近的消息。不会修改原库，也不会发送消息。</p>
-                  <span className="st done"><Check size={11} />已完成</span>
-                  <button type="button" className="go" onClick={() => openSettings('db')}>查看同步详情 <ArrowRight size={13} /></button>
-                </article>
-                <article className="step">
-                  <div className="n">STEP 02</div><h3>配置模型</h3>
-                  <p>填入 OpenAI-compatible 的地址、模型和 API Key。不配置也可以只用本地统计与原文浏览。</p>
-                  <span className="st todo">待完成</span>
-                  <button type="button" className="go" onClick={() => openSettings('model')}>去配置 <ArrowRight size={13} /></button>
-                </article>
-                <article className="step">
-                  <div className="n">STEP 03</div><h3>建立第一段关系档案</h3>
-                  <p>选择一个私聊对象，生成关系时间线与双方变化。所有结论都能回到原文。</p>
-                  <span className="st todo">待完成</span>
-                  <button type="button" className="go" onClick={() => setView('messages')}>去消息页 <ArrowRight size={13} /></button>
-                </article>
-              </div>
-              <div className="guide-note">
-                <div className="ic"><ShieldCheck size={14} /></div>
-                <div><b>关于图片解密与语音转文字：</b>这两项默认关闭。开启后只在本机处理，结果保存在本地缓存；生成报告时，语音仅发送转写文本；勾选图片后会发送图片至所选图片理解模型。</div>
-              </div>
-            </div>
           </section>
         )}
 
@@ -2026,7 +2118,7 @@ export default function App() {
                     <div className="group">
                       <Field title="数据目录" hint="微信 4.x 的 xwechat_files">
                         <span className="path" title={displayDirectory}>{displayDirectory}</span>
-                        <button type="button" className="btn sm" onClick={() => void selectDirectory()}>更改</button>
+                        <ActionButton type="button" className="btn sm" onClick={() => void selectDirectory()}>更改</ActionButton>
                       </Field>
                       <Field title="当前账号" hint={account?.id ?? '未检测到账号'}>
                         {account ? (
@@ -2042,7 +2134,7 @@ export default function App() {
                         <select className="inp provider" value={account?.root ?? ''} disabled={syncing || accounts.length === 0} onChange={(event) => void switchAccount(event.target.value)}>
                           {accounts.map((item) => <option key={item.root} value={item.root}>{item.wxid}</option>)}
                         </select>
-                        <button type="button" className="btn sm" onClick={disconnectAccount}>退出 WeTrace</button>
+                        <ActionButton type="button" className="btn sm" onClick={disconnectAccount}>退出 WeTrace</ActionButton>
                       </Field>
                       <Field title="数据库密钥" hint="用于解密本地 SQLCipher">
                         <span className="kv">
@@ -2055,16 +2147,16 @@ export default function App() {
                                 : '点击后按提示先退出微信账号'}
                           </small>
                         </span>
-                        <button type="button" className="btn sm" disabled={syncing} onClick={() => void startKeyCapture()}>
+                        <ActionButton type="button" className="btn sm" disabled={syncing} onClick={() => void startKeyCapture()}>
                           <KeyRound size={13} />{detected?.hasKey ? '重新获取' : '获取密钥'}
-                        </button>
+                        </ActionButton>
                       </Field>
                       <Field title="同步" hint="读取本机微信数据库">
                         <span className="kv">
                           {real ? `${real.messageTotal.toLocaleString('en-US')} 条 · ${real.conversations.length} 个会话` : '尚未同步'}
                           <small>{real ? `最后同步 ${new Date(real.syncedAt).toLocaleString('zh-CN')}` : '尚未同步'}</small>
                         </span>
-                        <button type="button" className="btn sm primary" disabled={syncing} onClick={() => void runSync()}><RefreshCw size={13} />立即同步</button>
+                        <ActionButton type="button" className="btn sm primary" disabled={syncing} onClick={() => void runSync()}><RefreshCw size={13} />立即同步</ActionButton>
                       </Field>
                       {autoSyncError && <div className="settings-sync-error">自动刷新失败：{autoSyncError}</div>}
                     </div>
@@ -2080,7 +2172,7 @@ export default function App() {
                       <Field title="图片密钥" hint="与数据库密钥相互独立"><span className="kv">从微信本地缓存自动识别<small>无需填写或重新获取数据库密钥</small></span></Field>
                       <Field title="当前会话记录" hint="最近读取的聊天图片">
                         <span className="kv">已解密 {imageStats.available} / {imageStats.total} 张</span>
-                        <button type="button" className="btn sm" disabled={syncing} onClick={() => void doSync(rootDir ?? undefined)}>重新读取</button>
+                        <ActionButton type="button" className="btn sm" disabled={syncing} onClick={() => void doSync(rootDir ?? undefined)}>重新读取</ActionButton>
                       </Field>
                       <Field title="存储方式" hint="不改写微信原文件"><span className="kv">仅保留在当前应用内存<small>尚未下载的图片，请先在微信中打开后重新读取</small></span></Field>
                     </div>
@@ -2092,7 +2184,7 @@ export default function App() {
                     <h2>模型配置</h2>
                     <p className="desc">保存常用模型配置，可编辑并测试连接。API Key 会加密保存在本机，不会在列表中显示。</p>
                     <div className="group">
-                      <Field title="配置名称" hint="用于后续选择模型"><input className="inp" value={modelConfigName} onChange={event => setModelConfigName(event.target.value)} placeholder="例如：日常总结模型" /></Field>
+                      <Field title="配置名称" hint="用于后续选择模型"><Input className="inp" value={modelConfigName} onChange={event => setModelConfigName(event.target.value)} placeholder="例如：日常总结模型" /></Field>
                       {modelKind === 'speech' && <Field title="模型来源" hint="本地模型需要指定模型文件所在目录">
                         <select className="inp provider" value={modelSource} onChange={event => changeModelSource(event.target.value as ModelSource)}><option value="remote">在线服务</option><option value="local">本地模型</option></select>
                       </Field>}
@@ -2105,22 +2197,22 @@ export default function App() {
                         <Field title="接口格式" hint="默认 OpenAI">
                           <select className="inp provider" value={apiFormat} onChange={event => applyModelPreset(provider, event.target.value as ApiFormat, modelKind)}><option value="openai">base_url (OpenAI)</option><option value="anthropic">base_url (Anthropic)</option></select>
                         </Field>
-                        <Field title="Base URL" hint={apiFormat === 'anthropic' ? 'Anthropic 兼容地址，不含 /messages' : 'OpenAI 兼容地址，不含 /chat/completions'}><input className="inp" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" spellCheck={false} /></Field>
-                        <Field title="模型 ID" hint="支持填写任意服务商提供的模型 ID"><input className="inp" value={modelName} onChange={(event) => setModelName(event.target.value)} placeholder={modelKind === 'text' ? 'deepseek-chat' : '填写图片模型 ID'} spellCheck={false} /></Field>
+                        <Field title="Base URL" hint={apiFormat === 'anthropic' ? 'Anthropic 兼容地址，不含 /messages' : 'OpenAI 兼容地址，不含 /chat/completions'}><Input className="inp" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" spellCheck={false} /></Field>
+                        <Field title="模型 ID" hint="支持填写任意服务商提供的模型 ID"><Input className="inp" value={modelName} onChange={(event) => setModelName(event.target.value)} placeholder={modelKind === 'text' ? 'deepseek-chat' : '填写图片模型 ID'} spellCheck={false} /></Field>
                         <Field title="API Key" required hint="加密保存在本机">
-                          <input className="inp" type="password" value={apiKey} placeholder="请输入 API Key" onChange={(event) => setApiKey(event.target.value)} autoComplete="off" required />
-                          <button type="button" className="btn sm" disabled={savingModel || testingModelId !== null} onClick={() => void testModel({ name: modelConfigName, provider, kind: modelKind, source: modelSource, apiFormat, baseUrl, model: modelName, localPath: localModelPath, apiKey })}>{testingModelId === 'form' ? '测试中…' : '测试连接'}</button>
+                          <Input className="inp" type="password" value={apiKey} placeholder="请输入 API Key" onChange={(event) => setApiKey(event.target.value)} autoComplete="off" required />
+                          <ActionButton type="button" className="btn sm" disabled={savingModel || testingModelId !== null} onClick={() => void testModel({ name: modelConfigName, provider, kind: modelKind, source: modelSource, apiFormat, baseUrl, model: modelName, localPath: localModelPath, apiKey })}>{testingModelId === 'form' ? '测试中…' : '测试连接'}</ActionButton>
                         </Field>
                       </> : <>
                         <Field title="模型目录" hint="选择包含本地模型文件的目录">
-                          <input className="inp" value={localModelPath} onChange={event => setLocalModelPath(event.target.value)} placeholder="/path/to/speech-model" spellCheck={false} />
-                          <button type="button" className="btn sm" onClick={() => void window.wetrace.selectDirectory('选择本地语音模型目录').then(directory => { if (directory) setLocalModelPath(directory) }).catch(() => undefined)}><FolderOpen size={13} />选择目录</button>
+                          <Input className="inp" value={localModelPath} onChange={event => setLocalModelPath(event.target.value)} placeholder="/path/to/speech-model" spellCheck={false} />
+                          <ActionButton type="button" className="btn sm" onClick={() => void window.wetrace.selectDirectory('选择本地语音模型目录').then(directory => { if (directory) setLocalModelPath(directory) }).catch(() => undefined)}><FolderOpen size={13} />选择目录</ActionButton>
                         </Field>
-                        <Field title="模型名称" hint="例如 SenseVoice Small INT8"><input className="inp" value={modelName} onChange={(event) => setModelName(event.target.value)} placeholder="SenseVoice Small INT8" spellCheck={false} /></Field>
+                        <Field title="模型名称" hint="例如 SenseVoice Small INT8"><Input className="inp" value={modelName} onChange={(event) => setModelName(event.target.value)} placeholder="SenseVoice Small INT8" spellCheck={false} /></Field>
                       </>}
                       <Field title="保存配置" hint="添加到下方列表">
-                        {modelSource === 'local' && <button type="button" className="btn sm" disabled={savingModel || testingModelId !== null} onClick={() => void testModel({ name: modelConfigName, provider, kind: modelKind, source: modelSource, apiFormat, baseUrl, model: modelName, localPath: localModelPath, apiKey })}>{testingModelId === 'form' ? '检测中…' : '检测目录'}</button>}
-                        <button type="button" className="btn sm primary" disabled={savingModel || testingModelId !== null} onClick={() => void saveModel({ name: modelConfigName, provider, kind: modelKind, source: modelSource, apiFormat, baseUrl, model: modelName, localPath: localModelPath, apiKey })}>{savingModel ? '保存中…' : '保存模型'}</button>
+                        {modelSource === 'local' && <ActionButton type="button" className="btn sm" disabled={savingModel || testingModelId !== null} onClick={() => void testModel({ name: modelConfigName, provider, kind: modelKind, source: modelSource, apiFormat, baseUrl, model: modelName, localPath: localModelPath, apiKey })}>{testingModelId === 'form' ? '检测中…' : '检测目录'}</ActionButton>}
+                        <ActionButton type="button" className="btn sm primary" disabled={savingModel || testingModelId !== null} onClick={() => void saveModel({ name: modelConfigName, provider, kind: modelKind, source: modelSource, apiFormat, baseUrl, model: modelName, localPath: localModelPath, apiKey })}>{savingModel ? '保存中…' : '保存模型'}</ActionButton>
                       </Field>
                     </div>
                     <div className="model-list-head"><h3>已配置模型</h3><span>{configurableModels.length} 个</span></div>
@@ -2138,10 +2230,10 @@ export default function App() {
                                   <b><SafeText>{displayName}</SafeText></b><span>{modelKindLabels[config.kind ?? 'text']} · {config.model} · {local ? `本地模型 · ${config.localPath}` : `${config.provider} · ${config.baseUrl}`}</span>
                                 </button>
                                 <span className="model-key-state">{local ? '本地目录' : config.hasApiKey ? '已设置密钥' : '无密钥'}</span>
-                                {config.isDefault ? <span className="model-default-state">默认</span> : <button type="button" className="btn sm" disabled={savingModel} onClick={() => void setDefaultModel(config)}>设为默认</button>}
-                                <button type="button" className="btn sm" disabled={testingModelId !== null} onClick={() => void testModel({ id: config.id, name: displayName, kind: config.kind, source: config.source, apiFormat: config.apiFormat, provider: config.provider, baseUrl: config.baseUrl, model: config.model, localPath: config.localPath })}>{testingModelId === config.id ? local ? '检测中…' : '测试中…' : local ? '检测目录' : '测试'}</button>
-                                <button type="button" className="btn sm" aria-expanded={expanded} aria-controls={editorId} onClick={() => editModel(config)}>{expanded ? '收起' : '编辑'}</button>
-                                <button type="button" className="btn sm danger" onClick={() => void removeModel(config)}>删除</button>
+                                {config.isDefault ? <span className="model-default-state">默认</span> : <ActionButton type="button" className="btn sm" disabled={savingModel} onClick={() => void setDefaultModel(config)}>设为默认</ActionButton>}
+                                <ActionButton type="button" className="btn sm" disabled={testingModelId !== null} onClick={() => void testModel({ id: config.id, name: displayName, kind: config.kind, source: config.source, apiFormat: config.apiFormat, provider: config.provider, baseUrl: config.baseUrl, model: config.model, localPath: config.localPath })}>{testingModelId === config.id ? local ? '检测中…' : '测试中…' : local ? '检测目录' : '测试'}</ActionButton>
+                                <ActionButton type="button" className="btn sm" aria-expanded={expanded} aria-controls={editorId} onClick={() => editModel(config)}>{expanded ? '收起' : '编辑'}</ActionButton>
+                                <ActionButton type="button" className="btn sm danger" onClick={() => void removeModel(config)}>删除</ActionButton>
                               </div>
                               {expanded && <div className="model-inline-editor" id={editorId}><ModelConfigEditor config={config} saving={savingModel} testingId={testingModelId} onSave={saveModel} onTest={testModel} onCancel={() => setEditingModelId(null)} /></div>}
                             </div>
@@ -2180,12 +2272,12 @@ export default function App() {
                       </div>}
                       {voiceModelStatus?.error && <p className="asr-download-error">{voiceModelStatus.error}</p>}
                       <div className="asr-model-actions">
-                        {!voiceModelStatus && <button type="button" className="btn sm" disabled>正在检测模型…</button>}
-                        {voiceModelStatus && !['downloading', 'ready', 'unsupported'].includes(voiceModelStatus.state) && <button type="button" className="btn sm primary" disabled={voiceModelBusy || !voiceModelStatus.supported} onClick={() => void downloadVoiceModel()}><Download size={13} />{voiceModelBusy ? '准备下载…' : voiceModelStatus.state === 'invalid' || voiceModelStatus.state === 'error' ? '重新下载' : '下载模型'}</button>}
-                        {voiceModelStatus?.state === 'downloading' && <button type="button" className="btn sm danger" onClick={() => void cancelVoiceModelDownload()}><X size={13} />取消下载</button>}
-                        {voiceModelStatus && voiceModelStatus.state !== 'downloading' && <button type="button" className="btn sm" disabled={voiceModelBusy} onClick={() => void refreshVoiceModel()}><RefreshCw size={13} className={voiceModelBusy ? 'spin' : undefined} />{voiceModelBusy ? '检测中…' : '重新检测'}</button>}
-                        {voiceModelStatus && <button type="button" className="btn sm" onClick={() => void openDownloadedVoiceModelDirectory()}><FolderOpen size={13} />打开目录</button>}
-                        {voiceModelStatus && voiceModelStatus.state !== 'downloading' && (voiceModelStatus.state === 'ready' || voiceModelStatus.state === 'invalid' || voiceModelStatus.state === 'error' || voiceModelStatus.downloadedBytes > 0) && <button type="button" className="btn sm danger" disabled={voiceModelBusy} onClick={() => void removeDownloadedVoiceModel()}><Trash2 size={13} />删除模型文件</button>}
+                        {!voiceModelStatus && <ActionButton type="button" className="btn sm" disabled>正在检测模型…</ActionButton>}
+                        {voiceModelStatus && !['downloading', 'ready', 'unsupported'].includes(voiceModelStatus.state) && <ActionButton type="button" className="btn sm primary" disabled={voiceModelBusy || !voiceModelStatus.supported} onClick={() => void downloadVoiceModel()}><Download size={13} />{voiceModelBusy ? '准备下载…' : voiceModelStatus.state === 'invalid' || voiceModelStatus.state === 'error' ? '重新下载' : '下载模型'}</ActionButton>}
+                        {voiceModelStatus?.state === 'downloading' && <ActionButton type="button" className="btn sm danger" onClick={() => void cancelVoiceModelDownload()}><X size={13} />取消下载</ActionButton>}
+                        {voiceModelStatus && voiceModelStatus.state !== 'downloading' && <ActionButton type="button" className="btn sm" disabled={voiceModelBusy} onClick={() => void refreshVoiceModel()}><RefreshCw size={13} className={voiceModelBusy ? 'spin' : undefined} />{voiceModelBusy ? '检测中…' : '重新检测'}</ActionButton>}
+                        {voiceModelStatus && <ActionButton type="button" className="btn sm" onClick={() => void openDownloadedVoiceModelDirectory()}><FolderOpen size={13} />打开目录</ActionButton>}
+                        {voiceModelStatus && voiceModelStatus.state !== 'downloading' && (voiceModelStatus.state === 'ready' || voiceModelStatus.state === 'invalid' || voiceModelStatus.state === 'error' || voiceModelStatus.downloadedBytes > 0) && <ActionButton type="button" className="btn sm danger" disabled={voiceModelBusy} onClick={() => void removeDownloadedVoiceModel()}><Trash2 size={13} />删除模型文件</ActionButton>}
                       </div>
                     </article>
 
@@ -2200,18 +2292,18 @@ export default function App() {
                     <div className="group">
                       <Field title="语音转写缓存" hint="已成功转写并保存到本机的语音"><span className="kv">{mediaCacheStats ? `${mediaCacheStats.voice.count.toLocaleString()} 条 · ${formatBytes(mediaCacheStats.voice.bytes)}` : mediaCacheError ? '读取失败' : '统计中…'}</span></Field>
                       <Field title="图片理解缓存" hint="已成功理解并保存到本机的图片"><span className="kv">{mediaCacheStats ? `${mediaCacheStats.image.count.toLocaleString()} 张 · ${formatBytes(mediaCacheStats.image.bytes)}` : mediaCacheError ? '读取失败' : '统计中…'}</span></Field>
-                      <Field title="刷新统计" hint={mediaCacheError || '生成报告后可刷新查看新增缓存'}><button type="button" className="btn sm" disabled={mediaCacheBusy} onClick={() => void refreshCacheStats()}><RefreshCw size={13} className={mediaCacheBusy ? 'spin' : undefined} />{mediaCacheBusy ? '统计中…' : '刷新统计'}</button></Field>
+                      <Field title="刷新统计" hint={mediaCacheError || '生成报告后可刷新查看新增缓存'}><ActionButton type="button" className="btn sm" disabled={mediaCacheBusy} onClick={() => void refreshCacheStats()}><RefreshCw size={13} className={mediaCacheBusy ? 'spin' : undefined} />{mediaCacheBusy ? '统计中…' : '刷新统计'}</ActionButton></Field>
                       <Field title="缓存占用" hint="WeTrace 本地缓存"><span className="kv">{cacheBytes === null ? '统计中…' : formatBytes(cacheBytes)}</span></Field>
                       <Field title="缓存目录" hint="可迁移到其他磁盘">
                         <span className="path">~/Library/Application Support/WeTrace/cache</span>
-                        <button type="button" className="btn sm" onClick={() => notify('缓存目录迁移将在真实数据接入后开放')}>更改</button>
+                        <ActionButton type="button" className="btn sm" onClick={() => notify('缓存目录迁移将在真实数据接入后开放')}>更改</ActionButton>
                       </Field>
                       <Field title="清理" hint="保留关系档案与报告">
-                        <button type="button" className="btn sm" onClick={() => notify('当前没有需要清理的图片缓存')}>清理图片缓存</button>
-                        <button type="button" className="btn sm" onClick={() => notify('请使用上方“更新索引”增量更新聊天记录')}>索引管理</button>
+                        <ActionButton type="button" className="btn sm" onClick={() => notify('当前没有需要清理的图片缓存')}>清理图片缓存</ActionButton>
+                        <ActionButton type="button" className="btn sm" onClick={() => notify('请使用上方“更新索引”增量更新聊天记录')}>索引管理</ActionButton>
                       </Field>
                       <Field title="清空全部本地数据" hint="不可恢复">
-                        <button type="button" className="btn sm danger" onClick={() => notify('真实数据接入后，这里会提供二次确认流程')}><Trash2 size={13} />清空数据</button>
+                        <ActionButton type="button" className="btn sm danger" onClick={() => notify('真实数据接入后，这里会提供二次确认流程')}><Trash2 size={13} />清空数据</ActionButton>
                       </Field>
                     </div>
                   </div>
@@ -2248,7 +2340,7 @@ export default function App() {
           void refreshStatus()
         }}
       />
-      {toast && <div className="toast" role="status">{toast}</div>}
+      {toast && <Alert className="toast" role="status" type="info" showIcon title={toast} />}
     </div>
   )
 }

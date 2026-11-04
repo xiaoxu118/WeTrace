@@ -26,7 +26,7 @@ app.whenReady().then(async () => {
     await fs.writeFile(stylesPath, stripTypeScriptTypes(await fs.readFile('src/shared/report-styles.ts', 'utf8')))
     await fs.writeFile(storePath, stripTypeScriptTypes((await fs.readFile('src/main/report-style-store.ts', 'utf8')).replace("'../shared/report-styles'", "'./styles.mjs'")))
     const store = await import(pathToFileURL(storePath).href)
-    assert.equal(store.listReportStyles().length, 7)
+    assert.equal(store.listReportStyles().length, 9)
     assert.equal(store.resolveReportStyle('personal-concise').scope, 'personal')
     const savedStyle = store.saveReportStyle({ name: '项目周报', prompt: '正式语气，优先总结进展、负责人和风险。' })
     assert.ok(savedStyle.id.startsWith('custom-'))
@@ -76,7 +76,7 @@ app.whenReady().then(async () => {
         }
         return image ? '图片中有项目进度表' : '## 整体概览\n本周完成了任务。\n## 原文依据\n消息 [1]\n' + '报告正文\n'.repeat(reportLines)
       },
-      resolveReportStyle: id => ({ id, name: id === 'custom-test' ? '项目风格' : '简洁摘要', prompt: id === 'custom-test' ? '优先整理风险及责任人' : '聚焦重点与结论' }),
+      resolveReportStyle: id => ['sharp', 'sarcastic'].includes(id) ? store.resolveReportStyle(id) : ({ id, name: id === 'custom-test' ? '项目风格' : '简洁摘要', prompt: id === 'custom-test' ? '优先整理风险及责任人' : '聚焦重点与结论' }),
     }
     const memberHelperPath = path.join(moduleDirectory, 'report-members.mjs')
     await fs.writeFile(memberHelperPath, stripTypeScriptTypes(await fs.readFile('src/shared/report-messages.ts', 'utf8')))
@@ -96,9 +96,12 @@ app.whenReady().then(async () => {
     source = source.replace("import { callReportModel, splitReportText } from './report-model'", "import { splitReportText } from './model.mjs'\nconst { callReportModel } = globalThis.reportFixture")
     await fs.writeFile(templatesPath, stripTypeScriptTypes(await fs.readFile('src/shared/report-templates.ts', 'utf8')))
     source = source.replace("'../shared/report-templates'", "'./templates.mjs'").replace("'../shared/report-feed'", "'./feed.mjs'")
-    await fs.writeFile(cachePath, stripTypeScriptTypes(await fs.readFile('src/main/voice-transcription-cache.ts', 'utf8')))
+    await fs.writeFile(path.join(moduleDirectory, 'policy.mjs'), stripTypeScriptTypes(await fs.readFile('src/main/conversation-cache-policy.ts', 'utf8')))
+    const { configureConversationCachePolicy } = await import(pathToFileURL(path.join(moduleDirectory, 'policy.mjs')).href)
+    configureConversationCachePolicy(path.join(temporary, 'cache-policy'))
+    await fs.writeFile(cachePath, stripTypeScriptTypes((await fs.readFile('src/main/voice-transcription-cache.ts', 'utf8')).replace("'./conversation-cache-policy.ts'", "'./policy.mjs'")))
     source = source.replace("'./voice-transcription-cache'", "'./voice-cache.mjs'")
-    await fs.writeFile(path.join(moduleDirectory, 'image-cache.mjs'), stripTypeScriptTypes(await fs.readFile('src/main/image-description-cache.ts', 'utf8')))
+    await fs.writeFile(path.join(moduleDirectory, 'image-cache.mjs'), stripTypeScriptTypes((await fs.readFile('src/main/image-description-cache.ts', 'utf8')).replace("'./conversation-cache-policy.ts'", "'./policy.mjs'")))
     source = source.replace("'./image-description-cache'", "'./image-cache.mjs'")
     source = source.replace("'./report-renderer'", "'./renderer.mjs'")
     await fs.writeFile(path.join(moduleDirectory, 'feed.mjs'), stripTypeScriptTypes(await fs.readFile('src/shared/report-feed.ts', 'utf8')))
@@ -142,6 +145,8 @@ app.whenReady().then(async () => {
     assert.ok(prompts.every(item => !item.prompt.includes('VIDEO_CONTENT_MUST_NOT_BE_PARSED')))
     assert.equal(prompts.filter(item => item.image).length, 1)
     const metadata = JSON.parse(await fs.readFile(path.join(path.dirname(result.htmlPath), 'report.json'), 'utf8'))
+    assert.equal(metadata.styleId, input.style)
+    assert.equal(metadata.stylePrompt, '聚焦重点与结论')
     assert.equal(metadata.startDate, input.startDate)
     assert.ok(metadata.name.includes(input.conversationName))
     const html = await fs.readFile(result.htmlPath, 'utf8')
@@ -200,6 +205,27 @@ app.whenReady().then(async () => {
       assert.ok(rendered.includes('<strong>重点</strong>'))
       assert.ok(rendered.includes('&lt;script&gt;内容&lt;/script&gt;'))
     }
+    const previousPrompts = prompts.slice()
+    const styleResults = []
+    reportLines = 3
+    for (const style of ['sharp', 'sarcastic']) {
+      prompts.length = 0
+      const report = await generateReport({ ...input, style, targetMember: undefined, contentTypes: ['message'] }, voice, () => {}, { ...snapshotData, contentTypes: ['message'], messages: [{ ...fixture[0], text: '真实项目讨论与决定。'.repeat(3500) }], counts: { message: 1, image: 0, voice: 0, video: 0 } })
+      const chosen = store.resolveReportStyle(style)
+      const textPrompts = prompts.filter(item => item.kind === 'text')
+      assert.ok(textPrompts.length > 1, '覆盖中间证据整理与最终生成')
+      assert.ok(textPrompts.slice(0, -1).every(item => !item.prompt.includes(chosen.prompt)), '预设表达风格不进入证据压缩')
+      assert.ok(textPrompts.at(-1).prompt.includes(chosen.prompt), '最终生成使用预设风格')
+      const meta = JSON.parse(await fs.readFile(path.join(path.dirname(report.htmlPath), 'report.json'), 'utf8'))
+      assert.equal(meta.styleName, chosen.name)
+      assert.equal(meta.stylePrompt, chosen.prompt)
+      assert.ok((await fs.readFile(report.htmlPath, 'utf8')).includes('成员确认了下一步行动'))
+      assert.equal(report.pngPaths.length, 1)
+      styleResults.push(report.content)
+    }
+    assert.equal(styleResults[0], styleResults[1], '相同模拟事实不被程序随风格改写')
+    reportLines = 150
+    prompts.splice(0, prompts.length, ...previousPrompts)
     const personalFixture = { ...snapshotData, messages: [{ ...fixture[0], senderId: 'alice', sender: '成员甲', text: '个人发言', from: 'them' }, { ...fixture[0], id: 'self', senderId: 'me', sender: '我', text: '我的发言', from: 'me' }] }
     await generateReport({ ...input, targetMember: { key: 'id:alice', name: '成员甲' } }, voice, () => {}, personalFixture)
     await generateReport({ ...input, targetMember: { key: 'self', name: '我' } }, voice, () => {}, personalFixture)

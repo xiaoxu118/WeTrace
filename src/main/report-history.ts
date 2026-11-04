@@ -37,6 +37,8 @@ export async function listReportHistory(directory: string): Promise<ReportHistor
         startDate: typeof meta.startDate === 'string' ? meta.startDate : dates[0] || '',
         endDate: typeof meta.endDate === 'string' ? meta.endDate : dates[1] || dates[0] || '',
         createdAt: Number.isFinite(stamp) && stamp > 0 ? stamp : stat.birthtimeMs,
+        styleId: typeof meta.styleId === 'string' ? meta.styleId : undefined,
+        styleName: typeof meta.styleName === 'string' ? meta.styleName : undefined,
         htmlPath, pngPaths })
     } catch { /* Skip removed, incomplete or unreadable exports without hiding other reports. */ }
   }

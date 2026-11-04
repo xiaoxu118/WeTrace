@@ -7,6 +7,9 @@ import type { ConversationIndexQuery, ConversationIndexResponse, SpeechStatsQuer
 declare global {
   interface Window {
     wetrace: {
+      resolveSticker(query: import('../../shared/sticker').StickerQuery): Promise<import('../../shared/sticker').StickerResponse>
+      groupMonitor(query: import('../../shared/group-monitor').MonitorQuery): Promise<import('../../shared/group-monitor').MonitorResponse>
+      listConversationOptions(root?: string): Promise<import('../../shared/types').ConversationOptionsResponse>
       loadAiPrompts(): Promise<import('../../shared/ai-prompt-settings').AiPromptSettingsResponse>
       saveAiPrompts(input: import('../../shared/ai-prompt-settings').SaveAiPromptsInput): Promise<import('../../shared/ai-prompt-settings').AiPromptSettingsResponse>
       onAiProgress(callback: (progress: import('../../shared/ai-chat').AiChatProgress) => void): () => void
@@ -15,6 +18,11 @@ declare global {
       refreshAiHotspots(): Promise<import('../../shared/ai-knowledge').HotspotResult>
       cancelAi(requestId: string): Promise<void>
       onAiDelta(callback: (delta: import('../../shared/ai-chat').AiChatDelta) => void): () => void
+      scheduledMessages(root: string, action: import('../../shared/scheduled-messages').SendTaskAction): Promise<import('../../shared/scheduled-messages').SendTaskResponse>
+      aiEvidence(input: import('../../shared/ai-evidence').AiEvidenceQuery): Promise<import('../../shared/ai-evidence').AiEvidenceResponse>
+      aiMemory(root: string, action: import('../../shared/ai-long-term-memory').AiMemoryAction): Promise<import('../../shared/ai-long-term-memory').AiMemoryResponse>
+      loadAiChatHistory(input: import('../../shared/ai-chat-history').LoadAiChatHistoryInput): Promise<import('../../shared/ai-chat-history').AiChatHistoryResponse>
+      saveAiChatHistory(input: import('../../shared/ai-chat-history').SaveAiChatHistoryInput): Promise<import('../../shared/ai-chat-history').SaveAiChatHistoryResponse>
       askAi(input: import('../../shared/ai-chat').AiChatInput): Promise<import('../../shared/ai-chat').AiChatResponse>
       getAppInfo(): Promise<{ version: string; platform: string }>
       selectDirectory(title?: string): Promise<string | null>
@@ -50,6 +58,7 @@ declare global {
       setDefaultModelConfig(id: string): Promise<ModelConfig[]>
       testModelConfig(input: SaveModelConfigInput): Promise<{ latencyMs: number }>
       openModelDirectory(id: string): Promise<void>
+      transcribeVoiceMessage(query: import('../../shared/types').VoiceMessageQuery): Promise<import('../../shared/types').VoiceMessageResponse>
       getVoiceModelStatus(): Promise<VoiceModelStatus>
       downloadVoiceModel(): Promise<VoiceModelDownloadResult>
       cancelVoiceModelDownload(): Promise<boolean>

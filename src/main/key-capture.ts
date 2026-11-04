@@ -1,3 +1,5 @@
+import { windowsNativeResources } from './native-resources'
+import { resolveWechatCompatibility } from '../shared/wechat-compatibility'
 import { app } from 'electron'
 import { execFile } from 'node:child_process'
 import fs from 'node:fs'
@@ -23,7 +25,11 @@ function findHelper(name: string): string | null {
   return candidates.find((candidate) => fs.existsSync(candidate)) ?? null
 }
 
-async function wechatVersion(): Promise<string> {
+export async function wechatVersion(): Promise<string> {
+  if (process.platform === 'win32') {
+    const { stdout } = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', "$p = Get-Process -Name Weixin,WeChat -ErrorAction SilentlyContinue | Select-Object -First 1; if (!$p) { exit 1 }; (Get-Item -LiteralPath $p.Path).VersionInfo.FileVersion"], { timeout: 10000, windowsHide: true })
+    return stdout.trim()
+  }
   const { stdout } = await run('/usr/libexec/PlistBuddy', [
     '-c',
     'Print :CFBundleShortVersionString',
@@ -66,13 +72,26 @@ function parseOutput(output: string): CaptureResult {
   return { success: false, code, error: messages[code] || '密钥工具未返回有效结果，请确认微信仍在登录页面后重试。' }
 }
 
-export async function captureAccountKey(onReady?: () => void): Promise<CaptureResult> {
+export async function captureAccountKey(onReady?: () => void, accountRoot?: string): Promise<CaptureResult> {
+  if (process.platform === 'win32' && process.arch === 'x64') {
+    try {
+      const resources = windowsNativeResources()
+      const version = await wechatVersion()
+      if (!resources.versions.includes(version)) return { success: false, code: 'UNSUPPORTED_VERSION', error: `当前微信版本 ${version} 未在Windows适配清单中` }
+      if (!accountRoot) throw new Error('缺少账号目录')
+      onReady?.()
+      const { stdout } = await run(resources.keyHelper, ['capture', '--account-root', accountRoot, '--json'], { timeout: 135000, maxBuffer: 2 << 20, windowsHide: true })
+      return parseOutput(stdout)
+    } catch { return { success: false, code: 'WINDOWS_CAPTURE_FAILED', error: 'Windows密钥工具不可用或执行失败，未保存密钥' } }
+  }
   if (process.platform !== 'darwin') {
     return { success: false, code: 'UNSUPPORTED_PLATFORM', error: '自动获取密钥目前仅支持 macOS。' }
   }
   try {
     const [version, pid] = await Promise.all([wechatVersion(), wechatPid()])
-    const current = /^4\.1\.13(?:\.|$)/.test(version)
+    const compatibility = resolveWechatCompatibility(process.platform, process.arch, version)
+    if (!compatibility?.captureProfile) return { success: false, code: 'UNSUPPORTED_VERSION', error: `当前微信版本 ${version} 尚未适配密钥获取，未尝试其他版本的工具。` }
+    const current = compatibility.captureProfile === 'wechat-4.1.13'
     const helperName = current ? 'xkey_helper_4_1_13' : 'xkey_helper'
     const helper = findHelper(helperName)
     if (!helper) return { success: false, code: 'HELPER_MISSING', error: `缺少 ${helperName} 取 key 组件。` }

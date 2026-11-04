@@ -1,3 +1,4 @@
+import { ActionButton } from './ui/ActionButton'
 import { useMemo, useRef, type ReactNode } from 'react'
 import type { ReportMessageSelection, SyncConversation, SyncMessage } from '../../../shared/types'
 import { reportSelectionKey } from '../../../shared/report-selection'
@@ -29,7 +30,7 @@ export function ReportMessagePicker({ conversation, selected, onChange, renderCo
   }
   return <div className="report-message-picker" aria-label="选择要总结的消息">
     <p className="report-picker-hint">勾选消息，按住 Shift 可连续多选。合并转发记录可展开选择内部消息；不会自动添加上下文。</p>
-    <div className="report-picker-actions"><button type="button" className="btn sm" onClick={() => onChange(items)}>全选已展示消息</button><button type="button" className="btn sm" onClick={() => onChange([])}>清空选择</button></div>
+    <div className="report-picker-actions"><ActionButton type="button" className="btn sm" onClick={() => onChange(items)}>全选已展示消息</ActionButton><ActionButton type="button" className="btn sm" onClick={() => onChange([])}>清空选择</ActionButton></div>
     {conversation.messages.map((message, index) => {
       const refs: ReportMessageSelection[] = message.forwarded ? message.forwarded.entries.map((_, entryIndex) => ({ id: message.id, createdAt: message.createdAt, entryIndex })) : [{ id: message.id, createdAt: message.createdAt }]
       const count = refs.filter(item => chosen.has(reportSelectionKey(item))).length

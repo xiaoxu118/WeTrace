@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite'
 import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from 'node:crypto'
-import { chmodSync, mkdirSync } from 'node:fs'
+import { chmodSync, mkdirSync, existsSync } from 'node:fs'
 import path from 'node:path'
 import type { ReportMessagesResult, SyncMessage } from '../shared/types'
 
@@ -8,6 +8,25 @@ import type { ReportMessagesResult, SyncMessage } from '../shared/types'
 export class ReportDiskIndex {
   private readonly directory: string
   constructor(directory: string) { this.directory = directory }
+
+  exclude(account: string, secret: string, rooms: string[]): void {
+    const identity = createHash('sha256').update(JSON.stringify([account, secret])).digest('hex')
+    const file = path.join(this.directory, `${identity}.sqlite`)
+    if (!existsSync(file) || !rooms.length) return
+    const key = Buffer.from(hkdfSync('sha256', secret, identity, 'wetrace-report-index-v1', 32))
+    const db = this.open(file)
+    try {
+      db.exec('BEGIN IMMEDIATE')
+      for (const row of db.prepare('SELECT id,metadata FROM entries').all()) {
+        const metadata = this.unseal<{ data: { conversationId: string } }>(row.metadata, key, `${row.id}:metadata`)
+        if (!rooms.includes(metadata.data.conversationId)) continue
+        db.prepare('DELETE FROM messages WHERE entry=?').run(String(row.id))
+        db.prepare('DELETE FROM entries WHERE id=?').run(String(row.id))
+      }
+      db.exec('COMMIT')
+    } catch (error) { db.exec('ROLLBACK'); throw error }
+    finally { db.close() }
+  }
 
   get(account: string, secret: string, entry: string, fingerprint: () => string, read: () => ReportMessagesResult): ReportMessagesResult {
     const before = fingerprint()
@@ -26,7 +45,8 @@ export class ReportDiskIndex {
     const db = new DatabaseSync(file)
     try {
       chmodSync(file, 0o600)
-      db.exec(`CREATE TABLE IF NOT EXISTS entries (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, metadata BLOB NOT NULL);
+      db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;
+        CREATE TABLE IF NOT EXISTS entries (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, metadata BLOB NOT NULL);
         CREATE TABLE IF NOT EXISTS messages (entry TEXT NOT NULL, position INTEGER NOT NULL, time INTEGER NOT NULL, type INTEGER NOT NULL, payload BLOB NOT NULL, PRIMARY KEY(entry, position));
         CREATE INDEX IF NOT EXISTS report_entry_time_type ON messages(entry, time, type);`)
       return db

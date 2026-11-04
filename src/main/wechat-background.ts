@@ -103,8 +103,8 @@ export function runWechatReportMedia(account: WechatAccount, key: string, conver
   return request<SyncMessage>({ type: 'report-media', account, key, conversationId, message })
 }
 
-export function runWechatChatIndex(account: WechatAccount, key: string, action: ChatIndexAction): Promise<ChatIndexStatus> {
-  return request<ChatIndexStatus>({ type: 'chat-index', account, key, action })
+export function runWechatChatIndex(account: WechatAccount, key: string, action: ChatIndexAction, excludedConversationIds?: string[]): Promise<ChatIndexStatus> {
+  return request<ChatIndexStatus>({ type: 'chat-index', account, key, action, excludedConversationIds })
 }
 
 export function runIndexSearch(account: WechatAccount, key: string, keyword: string): Promise<ChatIndexSearchMatch[]> {
@@ -117,3 +117,13 @@ export function runIndexedConversation(account: WechatAccount, key: string, conv
 export function runReportParticipantProfiles(account: WechatAccount, key: string, participants: ReportParticipant[]): Promise<ReportParticipant[]> {
   return request<ReportParticipant[]>({ type: 'report-participants', account, key, participants })
 }
+
+export function runConversationOptions(account: WechatAccount, key: string): Promise<import('../shared/types').ConversationOption[]> {
+  return request({ type: 'conversation-options', account, key })
+}
+
+export function runGroupMonitor(account: WechatAccount, key: string, query: import('../shared/group-monitor').MonitorQuery): Promise<import('../shared/group-monitor').MonitorState> {
+  return request({ type: 'group-monitor', account, key, query })
+}
+
+export function runStickerUrl(account: WechatAccount, key: string, md5: string): Promise<string | null> { return request({ type: 'sticker-url', account, key, md5 }) }

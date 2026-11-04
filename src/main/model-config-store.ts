@@ -205,8 +205,8 @@ export async function testModelConfig(input: SaveModelConfigInput): Promise<{ la
 }
 
 // Credentials stay in the main process.
-export function resolveReportModel(id: string, kind: 'text' | 'image'): StoredModelConfig {
-  const config = readConfigs().find(item => item.id === id && item.kind === kind && item.source === 'remote')
+export function resolveReportModel(id: string, kind: 'text' | 'image', allowImageForText = false): StoredModelConfig {
+  const config = readConfigs().find(item => item.id === id && (item.kind === kind || (allowImageForText && kind === 'text' && item.kind === 'image')) && item.source === 'remote')
   if (!config) throw new Error(kind === 'image' ? '请配置图片理解模型' : '请配置基础语言模型')
   return config
 }

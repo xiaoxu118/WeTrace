@@ -1,3 +1,8 @@
+import { resolveWechatCompatibility } from '../shared/wechat-compatibility'
+import { windowsNativeResources } from './native-resources'
+import { defaultWechatRoot, wechatPlatformSupport } from './wechat-platform'
+import { app } from 'electron'
+import { StickerResolver } from './sticker-resolver'
 import type { ReportParticipant } from '../shared/report-facts'
 import type { ChatIndexSearchQuery, IndexedConversationQuery, ChatIndexSearchMatch, ChatIndexQuery, ChatIndexStatus } from '../shared/chat-index'
 import type { ConversationIndexQuery, ConversationIndexSummary, SpeechStatsQuery, SpeechStatsResult } from '../shared/types'
@@ -18,16 +23,13 @@ import {
   saveDatabaseKey,
   type StoredDatabaseKey,
 } from './database-key-store'
-import { captureAccountKey } from './key-capture'
+import { captureAccountKey, wechatVersion } from './key-capture'
 import { sipEnabled } from './security'
-import { loadImagePreview, runReportParticipantProfiles, runIndexSearch, runIndexedConversation, runWechatChatIndex, runWechatConversationSummary, runWechatSpeechQuery, runWechatReportMedia, runWechatReportQuery, runWechatSync, validateWechatDatabase } from './wechat-background'
+import { runStickerUrl, runGroupMonitor, runConversationOptions, loadImagePreview, runReportParticipantProfiles, runIndexSearch, runIndexedConversation, runWechatChatIndex, runWechatConversationSummary, runWechatSpeechQuery, runWechatReportMedia, runWechatReportQuery, runWechatSync, validateWechatDatabase } from './wechat-background'
 
 export type { DetectResult, SyncConversation, SyncMessage, SyncResult, WechatAccount }
 
-const DEFAULT_ROOT = path.join(
-  process.env.HOME ?? '',
-  'Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files'
-)
+const DEFAULT_ROOT = process.platform === 'win32' ? path.join(app.getPath('documents'), 'xwechat_files') : defaultWechatRoot()
 
 export function listWechatAccounts(rootInput?: string): WechatAccount[] {
   const input = rootInput ?? DEFAULT_ROOT
@@ -56,6 +58,8 @@ function pickAccount(root: string): WechatAccount | null {
 }
 
 function requireAccount(rootInput?: string): WechatAccount {
+  const support = wechatPlatformSupport()
+  if (!support.supported) throw new Error(support.error)
   const root = rootInput ?? DEFAULT_ROOT
   const account = pickAccount(root)
   if (account) return account
@@ -76,8 +80,19 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+async function requireCompatibleWechatVersion(): Promise<void> {
+  let version: string
+  try { version = await wechatVersion() } catch { throw new Error('无法确定当前微信版本，未将账号标记为连接成功；请确认微信已安装且版本可读取') }
+  const compatible = process.platform === 'win32'
+    ? windowsNativeResources().versions.includes(version)
+    : Boolean(resolveWechatCompatibility(process.platform, process.arch, version))
+  if (!compatible) throw new Error(`当前微信版本 ${version} 尚未适配，未将账号标记为连接成功`)
+}
+
 export async function detectWechat(rootInput?: string): Promise<DetectResult> {
   const root = rootInput ?? DEFAULT_ROOT
+  const support = wechatPlatformSupport()
+  if (!support.supported) return { account: null, hasKey: false, keyCreatedAt: null, error: support.error }
   const account = pickAccount(root)
   if (!account) {
     return {
@@ -90,6 +105,7 @@ export async function detectWechat(rootInput?: string): Promise<DetectResult> {
     }
   }
 
+  try { await requireCompatibleWechatVersion() } catch (cause) { return { account, hasKey: false, keyCreatedAt: null, error: errorMessage(cause) } }
   let stored: StoredDatabaseKey | null = null
   let hasKey = false
   let error: string | undefined
@@ -107,12 +123,14 @@ export async function detectWechat(rootInput?: string): Promise<DetectResult> {
 }
 
 export async function fetchKey(rootInput?: string, onReady?: () => void): Promise<{ messageDb: string }> {
+  const support = wechatPlatformSupport()
+  if (!support.supported) throw new Error(support.error)
   const account = requireAccount(rootInput)
   if (await sipEnabled()) {
     throw new Error('macOS 系统完整性保护（SIP）已开启，无法读取微信进程内存。请关闭 SIP 后重启再试。')
   }
 
-  const result = await captureAccountKey(onReady)
+  const result = await captureAccountKey(onReady, account.root)
   if (!result.success || !result.key) throw new Error(result.error ?? '未捕获到账号密钥')
   try {
     await validateWechatDatabase(account.root, result.key)
@@ -125,6 +143,7 @@ export async function fetchKey(rootInput?: string, onReady?: () => void): Promis
 
 export async function syncWechat(options: { root?: string } = {}): Promise<SyncResult> {
   const account = requireAccount(options.root)
+  await requireCompatibleWechatVersion()
   const stored = loadDatabaseKey(account.root)
   if (!stored) throw new Error('尚未取得数据库密钥，请先获取密钥')
   return runWechatSync(account, stored.key)
@@ -177,8 +196,8 @@ export async function controlChatIndex(query: ChatIndexQuery): Promise<ChatIndex
   const account = requireAccount(query.root)
   const stored = loadDatabaseKey(account.root)
   if (!stored) throw new Error('尚未取得数据库密钥，请先获取密钥')
-  if (!['start', 'pause', 'rebuild', 'status', 'sync'].includes(query.action)) throw new Error('索引操作无效')
-  return runWechatChatIndex(account, stored.key, query.action)
+  if (!['start', 'pause', 'rebuild', 'status', 'sync', 'exclusions'].includes(query.action)) throw new Error('索引操作无效')
+  return runWechatChatIndex(account, stored.key, query.action, query.excludedConversationIds)
 }
 
 export async function searchChatIndex(query: ChatIndexSearchQuery): Promise<ChatIndexSearchMatch[]> {
@@ -206,4 +225,29 @@ export async function prepareReportParticipants(root: string | undefined, partic
     const preview = await loadImagePreview(id)
     return { ...member, avatar: preview ? `data:${preview.mime};base64,${preview.data.toString('base64')}` : undefined }
   }))
+}
+
+export async function listConversationOptions(root?: string): Promise<import('../shared/types').ConversationOption[]> {
+  const account = requireAccount(root), stored = loadDatabaseKey(account.root)
+  if (!stored) throw new Error('请先获取数据库密钥')
+  return runConversationOptions(account, stored.key)
+}
+
+export async function groupMonitor(query: import('../shared/group-monitor').MonitorQuery): Promise<import('../shared/group-monitor').MonitorState> {
+  const account = requireAccount(query.root)
+  const stored = loadDatabaseKey(account.root)
+  if (!stored) throw new Error('尚未取得数据库密钥，请先获取密钥')
+  if (!['status', 'poll', 'configure'].includes(query.action)) throw new Error('无效的监控操作')
+  return runGroupMonitor(account, stored.key, query)
+}
+
+let stickers: StickerResolver | undefined
+export async function resolveSticker(query: import('../shared/sticker').StickerQuery): Promise<import('../shared/sticker').StickerResponse> {
+  const account = requireAccount(query.root)
+  const stored = loadDatabaseKey(account.root)
+  if (!stored) throw new Error('请先连接微信账号')
+  if (query.md5 !== undefined && (typeof query.md5 !== 'string' || !/^[a-f\d]{32}$/i.test(query.md5))) throw new Error('表情包标识无效')
+  if (query.cdnUrl !== undefined && (typeof query.cdnUrl !== 'string' || query.cdnUrl.length > 8192)) throw new Error('表情包地址无效')
+  stickers ??= new StickerResolver(path.join(app.getPath('userData'), 'cache', 'stickers'))
+  return stickers.resolve(account.root, query.md5, query.cdnUrl, async () => query.md5 ? await runStickerUrl(account, stored.key, query.md5) || undefined : undefined)
 }

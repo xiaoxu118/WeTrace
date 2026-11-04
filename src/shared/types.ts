@@ -15,6 +15,8 @@ export interface DetectResult {
 
 export interface SyncMessage {
   id: string
+  serverId?: string
+  revoke?: { targetId?: string; unresolvedReason?: 'unlinked' | 'no-capture' | 'retention-limit' | 'capture-gap' }
   createdAt: number
   count?: number
   messageType: number
@@ -23,9 +25,11 @@ export interface SyncMessage {
   senderId?: string
   avatar?: string
   text: string
+  recall?: { original: string; originalAt: number; media?: Pick<SyncMessage, 'image' | 'voice' | 'sticker' | 'link' | 'forwarded' | 'quote'> }
   reportMedia?: { content: string; serverId?: string; imageFileHash?: string }
   voice?: { hex?: string; unavailable?: string }
-  image?: { source?: string; unavailable?: string }
+  image?: { source?: string; unavailable?: string; thumbnail?: boolean }
+  sticker?: { source?: string; unavailable?: string; label: string; md5?: string; cdnUrl?: string }
   link?: { url: string; title: string; description?: string }
   forwarded?: { title: string; entries: { sender: string; time?: string; text: string; messageType?: number }[]; unavailable?: string }
   quote?: { sender: string; text: string; type?: number; messageId?: string }
@@ -48,6 +52,7 @@ export interface SyncConversation {
 }
 
 export interface SyncResult {
+  monitorWarning?: string
   account: WechatAccount
   conversations: SyncConversation[]
   messageTotal: number
@@ -85,6 +90,8 @@ export interface ReportMessagesResult extends ReportMessagesFilter {
 export type ReportMessagesResponse = { ok: true; data: ReportMessagesResult } | { ok: false; error: string }
 
 export interface KeyStatus {
+  supported?: boolean
+  error?: string
   sipEnabled: boolean
   hasKey: boolean
   wechatRunning: boolean
@@ -181,7 +188,7 @@ export type GenerateReportResponse = { ok: true; data: GeneratedReport } | { ok:
 export interface SpeechStatsQuery { root?: string; conversationId: string; startDate: string; endDate: string }
 export interface SpeechStatsResult {
   total: number
-  members: { id: string; name: string; count: number }[]
+  members: { id: string; name: string; count: number; isSelf?: boolean }[]
   silentMembers: { id: string; name: string }[] | null
   membershipError?: string
 }
@@ -191,4 +198,10 @@ export interface ConversationIndexQuery { root?: string; conversationId: string 
 export interface ConversationIndexSummary { total: number; firstAt: number | null; lastAt: number | null }
 export type ConversationIndexResponse = { ok: true; data: ConversationIndexSummary } | { ok: false; error: string }
 
-export interface ReportHistoryItem { id: string; name: string; startDate: string; endDate: string; createdAt: number; htmlPath: string; pngPaths: string[] }
+export interface ReportHistoryItem { styleId?: string; styleName?: string; id: string; name: string; startDate: string; endDate: string; createdAt: number; htmlPath: string; pngPaths: string[] }
+
+export type ConversationOption = Pick<SyncConversation, 'id' | 'name' | 'type' | 'avatar'>
+export type ConversationOptionsResponse = { ok: true; conversations: ConversationOption[] } | { ok: false; error: string }
+
+export interface VoiceMessageQuery { root?: string; conversationId: string; id: string; createdAt: number }
+export type VoiceMessageResponse = { ok: true; text: string; warning?: string } | { ok: false; error: string }

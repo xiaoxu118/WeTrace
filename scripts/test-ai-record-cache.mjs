@@ -24,3 +24,23 @@ assert.equal((await tiny.get('a', revision, read)).cached, false)
 const controller = new AbortController(); controller.abort()
 await assert.rejects(() => cache.get('a', revision, read, controller.signal))
 console.log('AI record cache: reuse, source invalidation, range/account isolation, LRU, TTL, memory bound and cancellation passed')
+
+const concurrentCache = new AiRecordCache(30,60000,10)
+let release
+const gate = new Promise(resolve=>{release=resolve})
+const pendingA=concurrentCache.get('same',()=> 'v1',async()=>{await gate;return {value:'x'}})
+const pendingB=concurrentCache.get('same',()=> 'v1',async()=>{await gate;return {value:'x'}})
+release();await Promise.all([pendingA,pendingB])
+await concurrentCache.get('other',()=> 'v1',async()=>({value:'y'}))
+assert.equal((await concurrentCache.get('same',()=> 'v1',async()=>{throw new Error('duplicate bytes caused premature eviction')})).cached,true)
+const isolated=new AiRecordCache()
+const abortOne=new AbortController()
+let finishReads
+const waitForReads=new Promise(resolve=>{finishReads=resolve})
+const cancelledRead=isolated.get('shared',()=> 'v1',async()=>{await waitForReads;return '结果'},abortOne.signal)
+const survivingRead=isolated.get('shared',()=> 'v1',async()=>{await waitForReads;return '结果'})
+const cancellation=assert.rejects(cancelledRead,/abort/i)
+abortOne.abort();finishReads()
+await cancellation
+assert.equal((await survivingRead).data,'结果')
+console.log('并行对话缓存：相同键容量计数准确，取消一个请求不影响另一个请求通过')

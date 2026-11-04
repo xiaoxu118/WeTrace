@@ -1,3 +1,4 @@
+import { conversationCacheAllowed } from './conversation-cache-policy.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -17,22 +18,26 @@ export class ImageDescriptionCache {
 
   async getOrDescribe(scope: string, image: { data: Buffer; mime: string }, modelVersion: string, describe: () => Promise<string>): Promise<CachedDescription> {
     if (!image.data.length || !image.mime) throw new Error('图片数据格式无效')
+    let ids: unknown
+    try { ids = JSON.parse(scope) } catch { /* Legacy opaque scopes. */ }
+    const allowed = () => !Array.isArray(ids) || ids.length !== 2 || !ids.every(id => typeof id === 'string') || conversationCacheAllowed(ids[0], ids[1])
+    if (!allowed()) return { text: (await describe()).trim(), fromCache: false }
     const key = createHash('sha256').update(JSON.stringify([scope, modelVersion, PIPELINE_VERSION, image.mime])).update(image.data).digest('hex')
     const recent = this.recent.get(key)
     if (recent) return { ...recent, fromCache: true }
     const running = this.pending.get(key)
     if (running) return { ...await running, fromCache: true }
-    const task = this.loadOrCreate(key, describe)
+    const task = this.loadOrCreate(key, describe, allowed)
     this.pending.set(key, task)
     try {
       const result = await task
-      this.recent.set(key, result)
+      if (allowed()) this.recent.set(key, result)
       if (this.recent.size > 128) this.recent.delete(this.recent.keys().next().value!)
       return result
     } finally { this.pending.delete(key) }
   }
 
-  private async loadOrCreate(key: string, describe: () => Promise<string>): Promise<CachedDescription> {
+  private async loadOrCreate(key: string, describe: () => Promise<string>, allowed: () => boolean): Promise<CachedDescription> {
     const file = path.join(this.directory, `${key}.json`)
     try {
       if ((await fs.stat(file)).size <= 1024 * 1024) {
@@ -42,11 +47,13 @@ export class ImageDescriptionCache {
     } catch { /* Missing or damaged cache entries are rebuilt from image data. */ }
     const text = (await describe()).trim()
     if (!text) throw new Error('未识别到有效图片描述')
+    if (!allowed()) return { text, fromCache: false }
     // Commit every successful description immediately, independently of report generation.
     const temporary = `${file}.${randomUUID()}.tmp`
     try {
       await fs.mkdir(this.directory, { recursive: true, mode: 0o700 })
       await fs.writeFile(temporary, JSON.stringify({ schema: 1, key, text, createdAt: new Date().toISOString() } satisfies CacheEntry), { mode: 0o600 })
+      if (!allowed()) { await fs.rm(temporary, { force: true }); return { text, fromCache: false } }
       await fs.rename(temporary, file)
       return { text, fromCache: false }
     } catch {

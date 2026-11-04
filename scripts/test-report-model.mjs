@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import http from 'node:http'
-import { callReportModel, splitReportText, escapeReportHtml } from '../src/main/report-model.ts'
+import { callReportModel, splitReportText, escapeReportHtml, ModelContextLimitError } from '../src/main/report-model.ts'
 
 const requests = []
 const server = http.createServer(async (request, response) => {
@@ -9,6 +9,10 @@ const server = http.createServer(async (request, response) => {
   const body = JSON.parse(text)
   requests.push({ url: request.url, headers: request.headers, body })
   response.setHeader('Content-Type', 'application/json')
+  if (body.model === 'capacity-code') { response.writeHead(400); response.end(JSON.stringify({error:{code:'context_length_exceeded',message:'PRIVATE_RESPONSE_MUST_NOT_LEAK'}})); return }
+  if (body.model === 'capacity-message') { response.writeHead(400); response.end(JSON.stringify({error:{type:'invalid_request_error',message:'prompt is too long: PRIVATE_RESPONSE_MUST_NOT_LEAK'}})); return }
+  if (body.model === 'capacity-413') { response.writeHead(413); response.end('too large'); return }
+  if (body.model === 'invalid-params') { response.writeHead(400); response.end(JSON.stringify({error:{message:'unknown model'}})); return }
   if (body.model === 'error') { response.writeHead(401); response.end('{}'); return }
   if (body.model === 'quota') { response.writeHead(429); response.end(JSON.stringify({error: {code: 'quota_exceeded', message: 'PRIVATE_RESPONSE_MUST_NOT_LEAK'}})); return }
   if (body.model === 'invalid-json') { response.end('<html>bad gateway</html>'); return }
@@ -38,6 +42,10 @@ try {
   assert.equal(requests.at(-1).headers['x-api-key'], 'test-key')
   assert.equal(requests.at(-1).body.messages[0].content[0].source.media_type, 'image/png')
   await assert.rejects(callReportModel({ ...config, model: 'error' }, '测试'), /HTTP 401/)
+  for(const model of ['capacity-code','capacity-message','capacity-413']) {
+    await assert.rejects(callReportModel({...config,model},'测试'),error=>error instanceof ModelContextLimitError && !error.message.includes('PRIVATE_RESPONSE'))
+  }
+  await assert.rejects(callReportModel({...config,model:'invalid-params'},'测试'),error=>!(error instanceof ModelContextLimitError) && /HTTP 400/.test(error.message))
   await assert.rejects(callReportModel({ ...config, model: 'empty' }, '测试'), /有效文本/)
   await assert.rejects(callReportModel({ ...config, model: 'truncated' }, '测试'), /长度限制/)
   await assert.rejects(callReportModel({ ...config, model: 'quota' }, '测试'), error => /HTTP 429.*quota_exceeded/.test(error.message) && !error.message.includes('PRIVATE_RESPONSE'))

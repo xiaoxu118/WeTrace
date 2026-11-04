@@ -1,0 +1,17 @@
+extends: ./electron-builder.yml
+extraResources:
+  - from: resources/wcdb/windows/x64
+    to: wcdb/windows/x64
+  - from: resources/send-bridge
+    to: send-bridge
+    filter:
+      - win32/x64/**
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: ${productName}-${version}-windows-${arch}.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true

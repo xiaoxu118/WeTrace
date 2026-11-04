@@ -8,6 +8,9 @@ class ReportOutputLimitError extends Error {
     this.partialText = partialText
   }
 }
+export class ModelContextLimitError extends Error {
+  constructor() { super('模型上下文容量不足，正在尝试缩小分析批次') }
+}
 class ModelHttpError extends Error {
   status: number
   retryAfterMs?: number
@@ -69,11 +72,16 @@ async function requestReportModel(config: Config, prompt: string, image?: { data
       429: '模型服务限流或额度不足，请检查套餐后稍后重试',
     }
     let code = ''
+    let contextLimit = response.status === 413
     try {
-      const body = await response.json() as { error?: { code?: unknown; type?: unknown } }
+      const body = await response.json() as { error?: { code?: unknown; type?: unknown; message?: unknown } }
       const value = body.error?.code ?? body.error?.type
+      // Inspect provider details only to classify capacity errors; never return their text.
+      const detail = [body.error?.code, body.error?.type, body.error?.message].filter(item => typeof item === 'string').join(' ')
+      if ([400, 422].includes(response.status) && /context[_ ](?:length[_ ]exceeded|window[_ ]exceeded)|maximum context length|context (?:window|length).*(?:exceed|limit|long)|(?:input|prompt|request).*(?:too (?:long|large)|exceeds?.*(?:token|context))|too many (?:input )?tokens|上下文.*(?:超|长)|输入.*(?:超.*限制|过长)/i.test(detail)) contextLimit = true
       if (typeof value === 'string' && /^[a-z\d_.-]{1,80}$/i.test(value) && !value.includes(config.apiKey)) code = `，服务错误码：${value}`
     } catch { /* HTML and unstructured server errors are not recorded. */ }
+    if (contextLimit) throw new ModelContextLimitError()
     throw new ModelHttpError(`模型请求失败（HTTP ${response.status}${code}）：${reasons[response.status] || (response.status >= 500 ? '模型服务暂时异常，请稍后重试或切换模型' : '请检查模型配置或服务状态')}`, response.status, response.headers.get('retry-after'))
   }
   if (options.onDelta) {

@@ -1,3 +1,5 @@
+import { windowsNativeResources } from './native-resources'
+import { wechatPlatformSupport } from './wechat-platform'
 import { createHash } from 'node:crypto'
 import type { IndexSource, IndexStore, IndexWatermark } from './chat-index'
 import { aggregateMessageStores, type MessageStore } from './native-statistics'
@@ -50,6 +52,7 @@ interface NativeBindings {
   execQuery?: (handle: number, kind: string, dbPath: string, sql: string, out: PointerOut) => number
   getGroupMembers?: (handle: number, username: string, out: PointerOut) => number
   getGroupNicknames?: (handle: number, username: string, out: PointerOut) => number
+  getEmoticonCdnUrl?: (handle: number, dbPath: string, md5: string, out: PointerOut) => number
   setMyWxid?: (handle: number, wxid: string) => number
   freeString: (pointer: unknown) => void
 }
@@ -62,7 +65,9 @@ let nativePaths = { appPath: process.cwd(), resourcesPath: process.resourcesPath
 export function configureWcdbPaths(paths: typeof nativePaths): void { nativePaths = paths }
 
 function nativeLibraryPath(): string {
-  if (process.platform !== 'darwin') throw new Error('当前 WCDB 桥接仅支持 macOS')
+  if (process.platform === 'win32' && process.arch === 'x64') return windowsNativeResources([nativePaths.resourcesPath, path.join(nativePaths.appPath, 'resources')]).api
+  const support = wechatPlatformSupport()
+  if (!support.supported) throw new Error(support.error)
   const arch = process.arch === 'arm64' ? 'arm64' : 'x64'
   const candidates = [
     process.env.WCDB_API_PATH,
@@ -78,7 +83,7 @@ function nativeLibraryPath(): string {
 function loadBindings(): NativeBindings {
   const apiPath = nativeLibraryPath()
   const libraryDirectory = path.dirname(apiPath)
-  koffi.load(path.join(libraryDirectory, 'libWCDB.dylib'))
+  koffi.load(path.join(libraryDirectory, process.platform === 'win32' ? 'WCDB.dll' : 'libWCDB.dylib'))
   const library = koffi.load(apiPath)
   const initProtection = library.func('int32 InitProtection(const char* resourcePath)') as (
     resourcePath: string
@@ -116,7 +121,10 @@ function loadBindings(): NativeBindings {
   let getGroupNicknames: NativeBindings['getGroupNicknames']
   try { getGroupNicknames = library.func('int32 wcdb_get_group_nicknames(int64 handle, const char* chatroomId, _Out_ void** outJson)') as NativeBindings['getGroupNicknames'] } catch { /* Optional in older bridges. */ }
 
+  let getEmoticonCdnUrl: NativeBindings['getEmoticonCdnUrl']
+  try { getEmoticonCdnUrl = library.func('int32 wcdb_get_emoticon_cdn_url(int64 handle, const char* dbPath, const char* md5, _Out_ void** outUrl)') as NativeBindings['getEmoticonCdnUrl'] } catch {}
   return {
+    getEmoticonCdnUrl,
     library,
     openAccount: library.func(
       'int32 wcdb_open_account(const char* path, const char* key, _Out_ int64* handle)'
@@ -514,6 +522,21 @@ export class Wcdb4Client {
         return this.normalizeMessages(rows, store.room, limit)
       },
     }
+  }
+
+  resolveEmoticonCdnUrl(md5: string): string | undefined {
+    if (!/^[a-f\d]{32}$/i.test(md5)) return undefined
+    const native = bindings(), read = native.getEmoticonCdnUrl
+    if (!read) throw new Error('当前数据库组件不支持查询表情包下载地址')
+    this.open()
+    const database = ['emoticon', 'emotion'].map(folder => path.join(this.accountRoot, 'db_storage', folder, 'emoticon.db')).find(file => fs.existsSync(file))
+    if (!database) return undefined
+    const output: PointerOut = [null]
+    try {
+      const result = read(this.handle!, database, md5.toLowerCase(), output)
+      if (result !== 0 || !output[0]) return undefined
+      return String(koffi.decode(output[0], 'char', -1)).trim() || undefined
+    } finally { if (output[0]) native.freeString(output[0]) }
   }
 
   getGroupMemberIds(username: string): string[] {

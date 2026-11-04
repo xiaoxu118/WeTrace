@@ -6,10 +6,11 @@ export interface ChatIndexStatus {
   totalStores: number
   current: string
   updatedAt: string | null
+  excludedConversationIds?: string[]
   errors: string[]
 }
-export type ChatIndexAction = 'start' | 'sync' | 'pause' | 'rebuild' | 'status'
-export interface ChatIndexQuery { root?: string; action: ChatIndexAction }
+export type ChatIndexAction = 'start' | 'sync' | 'pause' | 'rebuild' | 'status' | 'exclusions'
+export interface ChatIndexQuery { root?: string; action: ChatIndexAction; excludedConversationIds?: string[] }
 export type ChatIndexResponse = { ok: true; data: ChatIndexStatus } | { ok: false; error: string }
 export interface ChatIndexSearchQuery { root?: string; keyword: string }
 export interface ChatIndexSearchMatch { conversationId: string; conversationName: string; id: string; createdAt: number; text: string }

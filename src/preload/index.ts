@@ -5,6 +5,15 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { ReportConversationQuery, ReportConversationResponse, GenerateReportInput, GenerateReportResponse, ReportProgress, DetectResult, FetchKeyResponse, KeyStatus, ModelConfig, ReportMessagesQuery, ReportMessagesResponse, SaveModelConfigInput, SyncResponse, VoiceModelDownloadResult, VoiceModelStatus, WechatAccount } from '../shared/types'
 
 const api = {
+  scheduledMessages: (root: string, action: import('../shared/scheduled-messages').SendTaskAction): Promise<import('../shared/scheduled-messages').SendTaskResponse> => ipcRenderer.invoke('messages:schedule', root, action),
+  aiEvidence: (input: import('../shared/ai-evidence').AiEvidenceQuery): Promise<import('../shared/ai-evidence').AiEvidenceResponse> => ipcRenderer.invoke('ai:evidence', input),
+  aiMemory: (root: string, action: import('../shared/ai-long-term-memory').AiMemoryAction): Promise<import('../shared/ai-long-term-memory').AiMemoryResponse> => ipcRenderer.invoke('ai:memory', root, action),
+  loadAiChatHistory: (input: import('../shared/ai-chat-history').LoadAiChatHistoryInput): Promise<import('../shared/ai-chat-history').AiChatHistoryResponse> => ipcRenderer.invoke('ai:history-load', input),
+  saveAiChatHistory: (input: import('../shared/ai-chat-history').SaveAiChatHistoryInput): Promise<import('../shared/ai-chat-history').SaveAiChatHistoryResponse> => ipcRenderer.invoke('ai:history-save', input),
+  transcribeVoiceMessage: (query: import('../shared/types').VoiceMessageQuery): Promise<import('../shared/types').VoiceMessageResponse> => ipcRenderer.invoke('wechat:voice-transcribe', query),
+  resolveSticker: (query: import('../shared/sticker').StickerQuery): Promise<import('../shared/sticker').StickerResponse> => ipcRenderer.invoke('wechat:sticker', query),
+  groupMonitor: (query: import('../shared/group-monitor').MonitorQuery): Promise<import('../shared/group-monitor').MonitorResponse> => ipcRenderer.invoke('wechat:group-monitor', query),
+  listConversationOptions: (root?: string): Promise<import('../shared/types').ConversationOptionsResponse> => ipcRenderer.invoke('wechat:conversation-options', root),
   loadAiPrompts: (): Promise<import('../shared/ai-prompt-settings').AiPromptSettingsResponse> => ipcRenderer.invoke('ai:prompts-load'),
   saveAiPrompts: (input: import('../shared/ai-prompt-settings').SaveAiPromptsInput): Promise<import('../shared/ai-prompt-settings').AiPromptSettingsResponse> => ipcRenderer.invoke('ai:prompts-save', input),
   onAiProgress: (callback: (progress: import('../shared/ai-chat').AiChatProgress) => void): (() => void) => {

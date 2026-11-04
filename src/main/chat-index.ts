@@ -10,6 +10,7 @@ export interface IndexWatermark { count: number; maxId: number; types: number; t
 export interface IndexStore { id: string; room: string; tableName: string; dbPath: string }
 interface ImportCheckpoint { room: string; target: IndexWatermark; base: string | null; append: boolean; after: number; count: number }
 export interface IndexSource {
+  excluded?(room: string): boolean
   fingerprint?(): string
   stores(): IndexStore[]
   watermark(store: IndexStore, through?: number): IndexWatermark
@@ -34,7 +35,8 @@ export class ChatIndex {
     this.key = Buffer.from(hkdfSync('sha256', secret, identity, 'wetrace-chat-index-v1', 32))
     this.db = new DatabaseSync(file)
     chmodSync(file, 0o600)
-    this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA recursive_triggers=ON; PRAGMA busy_timeout=5000;
+    try {
+    this.db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA recursive_triggers=ON;
       CREATE TABLE IF NOT EXISTS stores (id TEXT PRIMARY KEY, room TEXT NOT NULL, mark TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS messages (source TEXT NOT NULL, id INTEGER NOT NULL, room TEXT NOT NULL, time INTEGER NOT NULL, sender TEXT NOT NULL, type INTEGER NOT NULL, payload BLOB NOT NULL, tokens TEXT NOT NULL, PRIMARY KEY(source,id));
       CREATE INDEX IF NOT EXISTS chat_room_time ON messages(room,time);
@@ -47,6 +49,7 @@ export class ChatIndex {
       CREATE TRIGGER IF NOT EXISTS chat_search_insert AFTER INSERT ON messages BEGIN INSERT INTO chat_search(rowid,tokens) VALUES(new.rowid,new.tokens); END;
       CREATE TRIGGER IF NOT EXISTS chat_search_delete AFTER DELETE ON messages BEGIN INSERT INTO chat_search(chat_search,rowid,tokens) VALUES('delete',old.rowid,old.tokens); END;
       CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);`)
+    } catch (error) { this.db.close(); throw error }
   }
   close(): void { this.db.close() }
   status(): ChatIndexStatus {
@@ -54,6 +57,22 @@ export class ChatIndex {
     const status = saved ? JSON.parse(String(saved.value)) as ChatIndexStatus : blank()
     const row = this.db.prepare("SELECT COALESCE(SUM(json_extract(mark, '$.count')),0) AS messages, COUNT(DISTINCT room) AS conversations FROM stores").get()!
     return { ...status, messages: Number(row.messages), conversations: Number(row.conversations) }
+  }
+  exclude(rooms: string[]): void {
+    // Every reader initializes its exclusion policy. An empty policy is not a write.
+    if (!rooms.length) return
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      for (const room of rooms) {
+        const ids = this.db.prepare('SELECT id FROM stores WHERE room=? UNION SELECT source AS id FROM staging WHERE room=? UNION SELECT id FROM planned WHERE room=?').all(room, room, room)
+        for (const row of ids) {
+          this.db.prepare('DELETE FROM metadata WHERE key IN (?,?)').run(`checkpoint:${row.id}`, `audit:${row.id}`)
+        }
+        for (const table of ['messages', 'staging', 'stores', 'planned']) this.db.prepare(`DELETE FROM ${table} WHERE room=?`).run(room)
+      }
+      this.db.prepare("DELETE FROM metadata WHERE key='source-fingerprint'").run()
+      this.db.exec('COMMIT')
+    } catch (error) { this.db.exec('ROLLBACK'); throw error }
   }
   private save(status: ChatIndexStatus): void {
     this.db.prepare("INSERT OR REPLACE INTO metadata VALUES ('status', ?)").run(JSON.stringify(status))
@@ -119,7 +138,7 @@ export class ChatIndex {
     this.save(status)
     try {
       const sourceVersion = source.fingerprint?.()
-      const stores = source.stores()
+      const stores = source.stores().filter(store => !source.excluded?.(store.room))
       this.db.exec('BEGIN IMMEDIATE')
       try {
         this.db.exec('DELETE FROM planned')
@@ -130,7 +149,8 @@ export class ChatIndex {
       status.totalStores = stores.length
       this.save(status)
       const insert = this.db.prepare('INSERT OR REPLACE INTO staging VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-      for (const store of stores) {
+      storeLoop: for (const store of stores) {
+        if (source.excluded?.(store.room)) { this.exclude([store.room]); continue }
         if (this.paused) break
         status.current = store.room
         this.save(status)
@@ -179,6 +199,7 @@ export class ChatIndex {
             if (next <= after) throw new Error('消息读取没有前进')
             after = next; readCount += rows.length
             await yieldWork()
+            if (source.excluded?.(store.room)) { this.exclude([store.room]); continue storeLoop }
           }
           if (this.paused) break
           if (readCount !== mark.count - (append ? previous!.count : 0)) throw new Error('消息数量变化，稍后重试')

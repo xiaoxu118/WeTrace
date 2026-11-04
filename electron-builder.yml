@@ -11,8 +11,12 @@ files:
 extraMetadata:
   main: out/main/index.js
 extraResources:
-  - from: resources/wcdb
-    to: wcdb
+  - from: resources/send-bridge
+    to: send-bridge
+    filter:
+      - darwin/**
+  - from: resources/wcdb/macos
+    to: wcdb/macos
   - from: resources/xkey_helper
     to: xkey_helper
   - from: resources/xkey_helper_4_1_13

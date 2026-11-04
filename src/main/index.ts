@@ -1,15 +1,27 @@
+import { ScheduledMessages } from './scheduled-messages'
+import { NativeMessageTransport } from './message-transport'
+import { wechatVersion } from './key-capture'
+import { queryAiEvidence } from './ai-evidence'
+import { wechatPlatformSupport } from './wechat-platform'
+import { AiLongTermMemoryStore } from './ai-long-term-memory'
+import { AiChatJobs } from './ai-chat-jobs'
+import { AiChatHistoryStore } from './ai-chat-history-store'
+import { createOfflineTranscriber } from './offline-voice'
+import { VoiceTranscriptionCache } from './voice-transcription-cache'
+import { configureConversationCachePolicy } from './conversation-cache-policy'
 import { getMediaCacheStats } from './media-cache-stats'
 import { listReportHistory } from './report-history'
 import { loadAiPrompts, saveAiPrompts } from './ai-prompt-store'
 import { loadAiKnowledge, saveAiKnowledge, getHotspots } from './ai-knowledge'
-import { answerAiChat } from './ai-chat'
+import { answerAiChat, clearAiRecordCaches } from './ai-chat'
 import { createReportDiagnostics, reportFailureAdvice } from './report-diagnostics'
 import { relaunchWithoutLibraryOverrides } from './startup-environment'
-import { app, BrowserWindow, dialog, ipcMain, shell, protocol } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell, protocol, safeStorage } from 'electron'
 import fs from 'node:fs'
+import { configureImagePreviewDirectory } from './image-preview-cache'
 import { loadImagePreview, stopRecordsProcess } from './wechat-background'
 import { join } from 'node:path'
-import { detectWechat, fetchKey, listWechatAccounts, searchChatIndex, getIndexedConversation, controlChatIndex, queryConversationSummary, querySpeechStats, prepareReportParticipants, prepareReportMedia, queryReportMessages, syncWechat } from './wechat'
+import { resolveSticker, groupMonitor, listConversationOptions, detectWechat, fetchKey, listWechatAccounts, searchChatIndex, getIndexedConversation, controlChatIndex, queryConversationSummary, querySpeechStats, prepareReportParticipants, prepareReportMedia, queryReportMessages, syncWechat } from './wechat'
 import { sipEnabled, wechatProcess, wechatRunning } from './security'
 import { deleteModelConfig, listModelConfigs, saveModelConfig, setDefaultModelConfig, testModelConfig } from './model-config-store'
 import { listReportStyles, saveReportStyle, deleteReportStyle } from './report-style-store'
@@ -22,6 +34,10 @@ import type { FetchKeyResponse, KeyStatus, GenerateReportInput, ReportConversati
 // dyld captures its search paths before JS executes; restart instead of mutating
 // the current process environment after native libraries may already be loaded.
 if (await relaunchWithoutLibraryOverrides()) app.exit(0)
+
+// A single scheduler owner prevents two app instances from dispatching the same saved task.
+if (!app.requestSingleInstanceLock()) app.exit(0)
+app.on('second-instance', () => { const window = BrowserWindow.getAllWindows()[0]; if (window) { if (window.isMinimized()) window.restore(); window.show(); window.focus() } })
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'wetrace-media', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }])
 
@@ -76,6 +92,11 @@ function stopAccountWatch(webContentsId: number): void {
 }
 
 app.whenReady().then(() => {
+  if (!app.isPackaged && process.platform === 'darwin') app.dock?.setIcon(join(app.getAppPath(), 'build/icon.png'))
+  configureConversationCachePolicy(join(app.getPath('userData'), 'cache-policy'))
+  const previewDirectory = fs.mkdtempSync(join(app.getPath('temp'), 'wetrace-previews-'))
+  configureImagePreviewDirectory(previewDirectory)
+  app.once('will-quit', () => { try { fs.rmSync(previewDirectory, { recursive: true, force: true }) } catch { /* Already removed. */ } })
   protocol.handle('wetrace-media', async request => {
     const url = new URL(request.url)
     const id = url.pathname.slice(1)
@@ -98,6 +119,14 @@ app.whenReady().then(() => {
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
 
+  ipcMain.handle('wechat:group-monitor', async (_event, query: import('../shared/group-monitor').MonitorQuery): Promise<import('../shared/group-monitor').MonitorResponse> => {
+    try { return { ok: true, data: await groupMonitor(query) } }
+    catch (error) { return { ok: false, error: error instanceof Error ? error.message : '群聊监控失败' } }
+  })
+  ipcMain.handle('wechat:sticker', async (_event, query: import('../shared/sticker').StickerQuery): Promise<import('../shared/sticker').StickerResponse> => {
+    try { return await resolveSticker(query) }
+    catch (error) { return { ok: false, error: error instanceof Error ? error.message : '表情包加载失败' } }
+  })
   ipcMain.handle('wechat:detect', (_event, root?: string) => detectWechat(root))
   ipcMain.handle('wechat:accounts', (_event, root?: string) => listWechatAccounts(root))
   ipcMain.handle('app:media-cache-stats', () => getMediaCacheStats(join(app.getPath('userData'), 'cache')))
@@ -112,7 +141,7 @@ app.whenReady().then(() => {
       if (!fs.existsSync(target)) continue
       try {
         const watcher = fs.watch(target, (_eventType, filename) => {
-          if (!filename || /\.db(?:-wal|-shm)?$/i.test(String(filename))) {
+          if (!filename || /\.db(?:-wal)?$/i.test(String(filename))) {
             if (!event.sender.isDestroyed()) event.sender.send('wechat:database-changed', account.root)
           }
         })
@@ -127,6 +156,8 @@ app.whenReady().then(() => {
   ipcMain.handle('wechat:unwatch', (event) => stopAccountWatch(event.sender.id))
 
   ipcMain.handle('wechat:key-status', async (_event, root?: string): Promise<KeyStatus> => {
+    const support = wechatPlatformSupport()
+    if (!support.supported) return { supported: false, error: support.error, sipEnabled: false, hasKey: false, wechatRunning: false, wechatLoggedIn: false }
     const [sip, process] = await Promise.all([sipEnabled(), wechatProcess()])
     return {
       sipEnabled: sip,
@@ -137,6 +168,8 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('wechat:fetch-key', async (event, root?: string): Promise<FetchKeyResponse> => {
+    const support = wechatPlatformSupport()
+    if (!support.supported) return { ok: false, error: support.error ?? '当前平台暂不支持' }
     if (await sipEnabled()) {
       return { ok: false, error: 'SIP_REQUIRED' }
     }
@@ -151,9 +184,18 @@ app.whenReady().then(() => {
     }
   })
 
+  ipcMain.handle('wechat:conversation-options', async (_event, root?: string) => {
+    try { return { ok: true as const, conversations: await listConversationOptions(root) } }
+    catch (error) { return { ok: false as const, error: error instanceof Error ? error.message : '读取会话列表失败' } }
+  })
+
+  let connectedSendAccount: string | undefined
   ipcMain.handle('wechat:sync', async (_event, root?: string) => {
     try {
-      return { ok: true as const, data: await syncWechat({ root }) }
+      const data = await syncWechat({ root })
+      if (connectedSendAccount && connectedSendAccount !== data.account.root) scheduledMessages.stop()
+      connectedSendAccount = data.account.root
+      return { ok: true as const, data }
     } catch (error) {
       return { ok: false as const, error: error instanceof Error ? error.message : '同步失败' }
     }
@@ -169,7 +211,7 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('wechat:chat-index', async (_event, query: import('../shared/chat-index').ChatIndexQuery) => {
-    try { return { ok: true as const, data: await controlChatIndex(query) } }
+    try { const data = await controlChatIndex(query); if (query.action === 'exclusions') clearAiRecordCaches(); return { ok: true as const, data } }
     catch (error) { return { ok: false as const, error: error instanceof Error ? error.message : '聊天索引操作失败' } }
   })
 
@@ -200,25 +242,64 @@ app.whenReady().then(() => {
   ipcMain.handle('ai:knowledge-load', () => loadAiKnowledge())
   ipcMain.handle('ai:knowledge-save', (_event, input: import('../shared/ai-knowledge').AiKnowledge) => saveAiKnowledge(input))
   ipcMain.handle('ai:hotspots-refresh', () => getHotspots(true))
-  const aiJobs = new Map<number, { requestId: string; controller: AbortController }>()
-  ipcMain.handle('ai:cancel', (event, requestId: string) => {
-    const job = aiJobs.get(event.sender.id)
-    if (job?.requestId === requestId) job.controller.abort()
+  const scheduledMessages = new ScheduledMessages(join(app.getPath('userData'), 'scheduled-messages'), new NativeMessageTransport(join(app.isPackaged ? process.resourcesPath : join(app.getAppPath(), 'resources'), 'send-bridge'), wechatVersion, async root => (await listConversationOptions(root)).filter(item => item.type === 'group' || item.type === 'friend')), value => {
+    if (!safeStorage.isEncryptionAvailable()) throw new Error('系统安全存储不可用，未保存发送任务')
+    return safeStorage.encryptString(value)
+  }, value => { if (!safeStorage.isEncryptionAvailable()) throw new Error('系统安全存储不可用'); return safeStorage.decryptString(value) })
+  ipcMain.handle('messages:schedule', async (_event, root: string, action: import('../shared/scheduled-messages').SendTaskAction): Promise<import('../shared/scheduled-messages').SendTaskResponse> => {
+    try { if (root !== connectedSendAccount) throw new Error('请先连接该账号后管理发送任务'); const result = await scheduledMessages.update(root, action); return { ok: true, ...result } }
+    catch (error) { return { ok: false, error: error instanceof Error ? error.message : '发送任务操作失败' } }
   })
+  const sendTimer = setInterval(() => { if (connectedSendAccount) void scheduledMessages.tick(connectedSendAccount).catch(() => undefined) }, 1000)
+  app.on('before-quit', () => { clearInterval(sendTimer); scheduledMessages.stop() })
+  ipcMain.handle('ai:evidence', async (_event, input: import('../shared/ai-evidence').AiEvidenceQuery): Promise<import('../shared/ai-evidence').AiEvidenceResponse> => {
+    try { return { ok: true, data: await queryAiEvidence(input, queryReportMessages) } }
+    catch (error) { return { ok: false, error: error instanceof Error ? error.message : '读取原文失败' } }
+  })
+  const longTermMemory = new AiLongTermMemoryStore(join(app.getPath('appData'), 'WeTrace', 'ai-long-term-memory'))
+  ipcMain.handle('ai:memory', (_event, root: string, action: import('../shared/ai-long-term-memory').AiMemoryAction): import('../shared/ai-long-term-memory').AiMemoryResponse => {
+    try { return { ok: true, memory: longTermMemory.update(root, action) } }
+    catch (error) { return { ok: false, error: error instanceof Error ? error.message : '记忆操作失败' } }
+  })
+  const aiChatHistory = new AiChatHistoryStore(join(app.getPath('appData'), 'WeTrace', 'ai-conversations'))
+  let historyFlushedOnQuit = false
+  app.on('before-quit', event => {
+    if (historyFlushedOnQuit) return
+    event.preventDefault()
+    void aiChatHistory.flush().finally(() => { historyFlushedOnQuit = true; app.quit() })
+  })
+  ipcMain.handle('ai:history-load', async (_event, input: import('../shared/ai-chat-history').LoadAiChatHistoryInput): Promise<import('../shared/ai-chat-history').AiChatHistoryResponse> => {
+    try { const stored = await aiChatHistory.load(input); return { ok: true, archive: stored.archive, revision: stored.revision } }
+    catch (error) { return { ok: false, error: error instanceof Error ? error.message : '读取本地对话失败' } }
+  })
+  ipcMain.handle('ai:history-save', async (_event, input: import('../shared/ai-chat-history').SaveAiChatHistoryInput): Promise<import('../shared/ai-chat-history').SaveAiChatHistoryResponse> => {
+    try { return { ok: true, revision: await aiChatHistory.save(input) } }
+    catch (error) { return { ok: false, error: error instanceof Error ? error.message : '保存本地对话失败' } }
+  })
+  const aiJobs = new AiChatJobs()
+  const aiJobOwners = new WeakSet<Electron.WebContents>()
+  ipcMain.handle('ai:cancel', (event, requestId: string) => { aiJobs.cancel(event.sender.id, requestId) })
   ipcMain.handle('ai:chat', async (event, input: import('../shared/ai-chat').AiChatInput) => {
-    if (aiJobs.has(event.sender.id)) return { ok: false, error: '已有回答正在生成' }
-    const controller = new AbortController()
-    aiJobs.set(event.sender.id, { requestId: input.requestId, controller })
-    const destroyed = () => controller.abort()
-    event.sender.once('destroyed', destroyed)
+    if (!input || typeof input.requestId !== 'string' || !input.requestId || (input.chatId !== undefined && (typeof input.chatId !== 'string' || !input.chatId))) return { ok: false, error: '对话请求无效' }
+    let controller: AbortController
+    try { controller = aiJobs.start(event.sender.id, input.requestId, JSON.stringify([input.root, input.chatId ?? input.requestId])) }
+    catch (error) { return { ok: false, error: error instanceof Error ? error.message : '无法启动对话' } }
+    if (!aiJobOwners.has(event.sender)) {
+      aiJobOwners.add(event.sender)
+      const owner = event.sender.id
+      event.sender.once('destroyed', () => aiJobs.cancelOwner(owner))
+    }
     try {
-      return { ok: true, answer: await answerAiChat(input, text => {
+      let queryState: import('../shared/ai-chat').AiQueryState | undefined
+      let memory: import('../shared/ai-chat').AiConversationMemory | undefined
+      const answer = await answerAiChat(input, text => {
         if (!event.sender.isDestroyed()) event.sender.send('ai:delta', { requestId: input.requestId, text })
       }, controller.signal, detail => {
         if (!event.sender.isDestroyed()) event.sender.send('ai:progress', { requestId: input.requestId, detail })
-      }) }
+      }, state => { queryState = state }, value => { memory = value }, budget => longTermMemory.context(input.root, budget))
+      return { ok: true, answer, queryState, memory }
     } catch (error) { return { ok: false, error: controller.signal.aborted ? '已停止生成' : error instanceof Error ? error.message : 'AI 对话失败' } }
-    finally { aiJobs.delete(event.sender.id); event.sender.removeListener('destroyed', destroyed) }
+    finally { aiJobs.finish(event.sender.id, input.requestId) }
   })
 
   ipcMain.handle('model:list', () => listModelConfigs())
@@ -237,6 +318,32 @@ app.whenReady().then(() => {
   })
 
   const voiceModelManager = new VoiceModelManager(join(app.getPath('userData'), 'models', 'sensevoice-small-int8'))
+  const listVoiceCache = new VoiceTranscriptionCache(join(app.getPath('userData'), 'cache', 'voice-transcriptions'))
+  let listTranscriber: ReturnType<typeof createOfflineTranscriber> | undefined
+  let voiceQueue: Promise<unknown> = Promise.resolve()
+  ipcMain.handle('wechat:voice-transcribe', async (_event, query: import('../shared/types').VoiceMessageQuery): Promise<import('../shared/types').VoiceMessageResponse> => {
+    const task = async (): Promise<import('../shared/types').VoiceMessageResponse> => {
+      try {
+        if (!query || typeof query.conversationId !== 'string' || !query.conversationId || typeof query.id !== 'string' || !query.id || !Number.isFinite(query.createdAt) || (query.root !== undefined && typeof query.root !== 'string')) throw new Error('语音消息参数无效')
+        if ((await voiceModelManager.getStatus()).state !== 'ready') throw new Error('请先在设置 → 语音转文字中下载并校验离线模型')
+        const date = new Date(query.createdAt)
+        if (!Number.isFinite(date.getTime())) throw new Error('语音消息时间无效')
+        const day = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+        const data = await queryReportMessages({ root: query.root, conversationId: query.conversationId, startDate: day, endDate: day, contentTypes: ['voice'], includeVoiceData: true, selectedMessages: [{ id: query.id, createdAt: query.createdAt }] })
+        const message = data.messages.find(item => item.id === query.id && item.createdAt === query.createdAt && item.messageType === 34)
+        if (!message?.voice?.hex) throw new Error(message?.voice?.unavailable || '未找到本地语音数据，请确认该语音已在微信中下载')
+        const result = await listVoiceCache.getOrTranscribe(JSON.stringify([query.root ?? '', query.conversationId]), message.voice.hex, voiceModelManager.cacheVersion, async () => {
+          listTranscriber ??= createOfflineTranscriber(voiceModelManager.directory)
+          try { return await (await listTranscriber)(message.voice!.hex!) }
+          catch (error) { listTranscriber = undefined; throw error }
+        })
+        return { ok: true, text: result.text, warning: result.warning }
+      } catch (error) { return { ok: false, error: error instanceof Error ? error.message : '语音转写失败' } }
+    }
+    const pending = voiceQueue.then(task, task)
+    voiceQueue = pending
+    return pending
+  })
   const reportSnapshots = new ReportSnapshotStore(queryReportMessages)
   const snapshotOwners = new WeakSet<Electron.WebContents>()
   ipcMain.handle('report:load-conversation', async (event, query: ReportConversationQuery) => {
