@@ -30,6 +30,43 @@ api.listConversationOptions = async () => ({ ok: true, conversations: data.conve
 const aiHistories = new Map()
 api.loadAiChatHistory = async ({root,legacy}) => { if(!aiHistories.has(root))aiHistories.set(root,{archive:legacy||{chats:[],activeId:null},revision:1});return {ok:true,...aiHistories.get(root)} }
 api.saveAiChatHistory = async ({root,archive,revision}) => { const saved=aiHistories.get(root);if(saved&&saved.revision!==revision)return {ok:false,error:'模拟版本冲突'};aiHistories.set(root,{archive,revision:revision+1});return {ok:true,revision:revision+1} }
+let failNextLoad = ''
+const originalLoadReport = api.loadReportConversation
+const rangeQueries = []
+let rangeDelays = []
+api.setRangeDelays = async delays => { rangeDelays = delays }
+api.getReportRangeQueries = async () => rangeQueries
+api.setReportLoadFailure = async mode => { failNextLoad = mode }
+api.loadReportConversation = async query => {
+  const failure = failNextLoad; failNextLoad = ''
+  if (failure === 'throw') throw new Error('模拟报告读取超时')
+  if (failure) return { ok: false, error: '模拟报告记录读取失败' }
+  if (!query.selectedMessages) {
+    if (!query.startDate || !query.endDate) throw new Error('报告取数必须携带当前日期范围')
+    rangeQueries.push({ startDate: query.startDate, endDate: query.endDate })
+    await new Promise(resolve => setTimeout(resolve, rangeDelays.shift() ?? 200))
+  }
+  const result = await originalLoadReport(query)
+  if (!query.selectedMessages) {
+    const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1); yesterday.setHours(12, 0, 0, 0)
+    const previous = { ...data.conversations[0].messages[0], id: 'yesterday-message', createdAt: yesterday.getTime(), text: '昨天的虚构记录' }
+    const start = new Date(query.startDate + 'T00:00:00').getTime()
+    const end = new Date(query.endDate + 'T00:00:00'); end.setDate(end.getDate() + 1)
+    result.data.messages = [...result.data.messages, previous].filter(message => message.createdAt >= start && message.createdAt < end.getTime())
+  }
+  return result
+}
+let databaseListener = () => {}
+api.onDatabaseChanged = callback => { databaseListener = callback; return () => { databaseListener = () => {} } }
+api.appendRecentFixture = async () => {
+  const conversation = data.conversations[1]
+  conversation.messages = [...conversation.messages, { id: 'new-after-report-open', createdAt: Date.now(), messageType: 1, from: 'them', sender: '成员甲', senderId: 'alice', text: '新增的测试消息', time: '12:01' }]
+  databaseListener(account.root)
+}
+let copiedReportFiles; let copyFailure = false
+api.copyReportImages = async files => { await new Promise(resolve => setTimeout(resolve, 200)); if (copyFailure) throw new Error('模拟图片复制失败'); copiedReportFiles = files }
+api.getCopiedReportFiles = async () => copiedReportFiles
+api.setCopyFailure = async value => { copyFailure = value }
 contextBridge.exposeInMainWorld('wetrace', api)
 `)
   const window = new BrowserWindow({ show: false, width: 1280, height: 900, webPreferences: { preload, sandbox: false, offscreen: true, partition: 'report-ui-test' } })
@@ -61,24 +98,30 @@ contextBridge.exposeInMainWorld('wetrace', api)
     await run(`document.querySelector('.summary-action').click()`)
     await until(`!!document.querySelector('.report-progress-panel') && document.querySelector('.report-count').textContent.includes('条')`)
     assert.deepEqual(await run(`window.wetrace.getReportTestStats()`), { loads: 1, oldQueries: 0, generatedSnapshotId: undefined })
+    assert.equal(await run(`!!document.querySelector('.report-template-note')`), false, '报告配置不再显示模板介绍区块')
+    assert.equal(await run(`getComputedStyle(document.querySelector('.report-submit button span')).color`), await run(`getComputedStyle(document.querySelector('.report-submit button')).color`), '按钮内部文字继承主按钮颜色，不受说明文字样式影响')
     for (let index = 0; index < 4; index++) {
       await run(`document.querySelectorAll('.report-check input')[${index}].click()`)
       await run(`document.querySelectorAll('.report-check input')[${index}].click()`)
     }
+    assert.equal((await run(`window.wetrace.getReportTestStats()`)).loads, 1, '内容类型筛选复用同一日期范围的快照')
     for (const text of ['今天', '昨天', '近 7 天']) {
       await run(`Array.from(document.querySelectorAll('.report-date-presets button')).find(button => button.textContent === ${JSON.stringify(text)}).click()`)
+      await until(`document.querySelector('.report-count').textContent.includes('条')`)
+      if (text === '昨天') assert.equal(await run(`document.querySelector('.report-count').textContent`), '1 条', '昨天只加载昨天的原始记录')
+      if (text === '今天') assert.equal(await run(`document.querySelector('.report-count').textContent`), '3 条', '今天的记录可以正常显示')
     }
-    assert.equal((await run(`window.wetrace.getReportTestStats()`)).loads, 1)
+    assert.equal((await run(`window.wetrace.getReportTestStats()`)).loads, 3, '切换日期按新范围重新取数')
     await run(`document.querySelectorAll('.report-layout .conv')[1].click()`)
     await until(`document.querySelector('.report-selected').textContent.includes('另一个讨论群') && document.querySelector('.report-count').textContent.includes('条')`)
     await run(`document.querySelectorAll('.report-layout .conv')[0].click()`)
     await until(`document.querySelector('.report-selected').textContent.includes('产品讨论群') && document.querySelector('.report-count').textContent.includes('条')`)
-    assert.equal((await run(`window.wetrace.getReportTestStats()`)).loads, 3)
+    assert.equal((await run(`window.wetrace.getReportTestStats()`)).loads, 5)
     await run(`document.querySelector('.report-list-title button').click()`)
     await until(`!!document.querySelector('.summary-action')`)
     await run(`document.querySelector('.summary-action').click()`)
     await until(`!!document.querySelector('.report-progress-panel') && document.querySelector('.report-count').textContent.includes('条')`)
-    assert.equal((await run(`window.wetrace.getReportTestStats()`)).loads, 3)
+    assert.equal((await run(`window.wetrace.getReportTestStats()`)).loads, 5)
     assert.equal(await run(`document.documentElement.scrollWidth <= innerWidth`), true)
     assert.equal(await run(`document.querySelector('[aria-label="图片理解模型"]').value`), '')
     await run(`(() => { const select = document.querySelector('[aria-label="图片理解模型"]'); select.value = 'image'; select.dispatchEvent(new Event('change', { bubbles: true })); })()`)
@@ -118,7 +161,7 @@ contextBridge.exposeInMainWorld('wetrace', api)
     await run(`Array.from(document.querySelectorAll('button')).find(button => button.textContent === '删除风格').click()`)
     await until(`document.querySelector('[aria-label="报告风格"]').value === 'default'`)
     assert.equal(await run(`!!document.querySelector('[aria-label="报告风格"] option[value="custom-ui-test"]')`), false)
-    assert.deepEqual(await run(`window.wetrace.getReportTestStats()`), { loads: 5, oldQueries: 0, generatedSnapshotId: 'snapshot-3' })
+    assert.deepEqual(await run(`window.wetrace.getReportTestStats()`), { loads: 7, oldQueries: 0, generatedSnapshotId: 'snapshot-5' })
     for (const key of ['id:alice', 'self']) {
       await run(`(() => { const select = document.querySelector('[aria-label="总结对象"]'); select.value = ${JSON.stringify(key)}; select.dispatchEvent(new Event('change', { bubbles: true })); })()`)
       await run(`document.querySelector('.report-submit button').click()`)
@@ -188,7 +231,16 @@ contextBridge.exposeInMainWorld('wetrace', api)
     await run(`Array.from(document.querySelectorAll('.report-output button')).find(button => button.textContent.includes('打开所在文件夹')).click()`)
     assert.equal(await run(`window.wetrace.getRevealedReport()`), '/test/report.html')
     assert.ok((await run(`document.querySelector('.report-output-path').textContent`)).includes('/test'))
-    await run(`Array.from(document.querySelectorAll('.report-output button')).find(button => button.textContent === '查看全部报告').click()`)
+    assert.deepEqual(await run(`Array.from(document.querySelectorAll('.report-output button')).map(button => button.textContent)`), ['复制图片', '打开所在文件夹'])
+    await run(`document.querySelector('.report-output button').click()`)
+    await until(`document.querySelector('.report-output button').disabled`)
+    await until(`!document.querySelector('.report-output button').disabled && document.body.textContent.includes('图片已复制')`)
+    assert.deepEqual(await run(`window.wetrace.getCopiedReportFiles()`), ['/test/report.png'])
+    await run(`window.wetrace.setCopyFailure(true)`)
+    await run(`document.querySelector('.report-output button').click()`)
+    await until(`!document.querySelector('.report-output button').disabled && document.body.textContent.includes('模拟图片复制失败')`)
+    await run(`window.wetrace.setCopyFailure(false)`)
+    await run(`document.querySelector('[aria-label="返回总结"]').click()`)
     await until(`document.querySelectorAll('.report-history-item').length === 1`)
     assert.ok((await run(`document.querySelector('.report-history-item').textContent`)).includes('已保存的产品讨论群日报'))
     await run(`Array.from(document.querySelectorAll('.report-history-actions button')).find(button => button.textContent.includes('打开文件夹')).click()`)
@@ -197,6 +249,44 @@ contextBridge.exposeInMainWorld('wetrace', api)
     await until(`document.querySelectorAll('.report-history-item').length === 0`)
 
 
-    console.log('报告页面测试通过：语音/图片实时计数与失败后保留、内容/日期/风格/模板配置零额外读取、切换会话刷新、返回页面复用、风格下拉、新建与删除、模板独立选择、右侧进度、重复提交保护、结果入口及宽度布局。')
+    await run(`document.querySelector('[aria-label="消息"]').click()`)
+    await until(`!!document.querySelector('.chat-head')`)
+    await run(`document.querySelectorAll('.msg-layout .conv')[1].click()`)
+    await until(`document.querySelector('.chat-head').textContent.includes('另一个讨论群')`)
+    await run(`window.wetrace.setReportLoadFailure('response')`)
+    await run(`Array.from(document.querySelectorAll('.chat-head .ops button')).find(button => button.textContent === '生成报告').click()`)
+    await until(`document.querySelector('.report-selected')?.textContent.includes('另一个讨论群') && document.body.textContent.includes('模拟报告记录读取失败')`)
+    assert.equal(await run(`!!document.querySelector('.report-selected-scope')`), false, '从消息窗口生成报告时清除上次的所选消息范围')
+    assert.equal(await run(`document.querySelector('[aria-label="搜索报告会话"]').value`), '')
+    await run(`Array.from(document.querySelectorAll('button')).find(button => button.textContent === '重新读取记录').click()`)
+    await until(`document.querySelector('.report-count')?.textContent.includes('条') && !document.body.textContent.includes('模拟报告记录读取失败')`)
+    await run(`document.querySelector('[aria-label="消息"]').click()`)
+    await until(`!!document.querySelector('.chat-head')`)
+    await run(`window.wetrace.setReportLoadFailure('throw')`)
+    await run(`Array.from(document.querySelectorAll('.chat-head .ops button')).find(button => button.textContent === '生成报告').click()`)
+    await until(`document.body.textContent.includes('模拟报告读取超时')`)
+    await run(`Array.from(document.querySelectorAll('button')).find(button => button.textContent === '重新读取记录').click()`)
+    await until(`document.querySelector('.report-count')?.textContent.includes('条') && !document.body.textContent.includes('模拟报告读取超时')`)
+    assert.equal(await run(`document.documentElement.scrollWidth <= innerWidth`), true)
+
+    const beforeRefresh = (await run(`window.wetrace.getReportTestStats()`)).loads
+    await run(`document.querySelector('[aria-label="消息"]').click()`)
+    await until(`!!document.querySelector('.chat-head')`)
+    await run(`window.wetrace.appendRecentFixture()`)
+    await until(`document.querySelector('.chat-scroll')?.textContent.includes('新增的测试消息')`)
+    await run(`document.querySelector('[aria-label="总结"]').click()`)
+    await until(`!!document.querySelector('.report-count') && document.querySelector('.report-count').textContent.includes('条')`)
+    await until(`window.wetrace.getReportTestStats().then(stats => stats.loads > ${beforeRefresh})`)
+    assert.ok((await run(`window.wetrace.getReportTestStats()`)).loads > beforeRefresh, '返回报告页时新消息必须使旧快照失效')
+    await run(`window.wetrace.setRangeDelays([500, 50])`)
+    await run(`Array.from(document.querySelectorAll('.report-date-presets button')).find(button => button.textContent === '昨天').click()`)
+    await until(`document.querySelector('.report-count').textContent === '加载中'`)
+    assert.equal(await run(`document.querySelector('.report-submit button').disabled`), true, '日期取数完成前禁止使用旧快照生成')
+    await run(`Array.from(document.querySelectorAll('.report-date-presets button')).find(button => button.textContent === '今天').click()`)
+    await until(`document.querySelector('.report-count').textContent === '3 条'`)
+    await run(`new Promise(resolve => setTimeout(resolve, 600))`)
+    assert.equal(await run(`document.querySelector('.report-count').textContent`), '3 条', '迟到的昨天响应不能覆盖今天的数据')
+    assert.ok((await run(`window.wetrace.getReportRangeQueries()`)).every(query => query.startDate !== '1970-01-01' && query.endDate !== '9999-12-31'), '报告界面从不要求加载全部历史')
+    console.log('报告页面测试通过：语音/图片实时计数与失败后保留、内容/日期/风格/模板配置零额外读取、切换会话刷新、返回页面复用、风格下拉、新建与删除、模板独立选择、右侧进度、重复提交保护、结果入口、当前会话报告跳转、读取失败重试、今天/昨天按范围取数与迟到响应保护及宽度布局。')
   } finally { window.destroy(); await fs.rm(preload, { force: true }) }
 }).then(() => app.exit(0)).catch(error => { console.error(error); app.exit(1) })

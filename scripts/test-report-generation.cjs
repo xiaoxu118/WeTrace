@@ -51,6 +51,7 @@ app.whenReady().then(async () => {
       { id: '4', messageType: 43, text: 'VIDEO_CONTENT_MUST_NOT_BE_PARSED' },
       { id: '5', messageType: 3, text: '[图片]', image: { unavailable: '未下载' } },
     ].map(item => ({ createdAt: Date.now(), from: 'them', time: '12:00', ...item }))
+    let voiceOnly = false
     let feedResponse = false
     let invalidFeedTimes = 0
     let reportLines = 150
@@ -64,6 +65,12 @@ app.whenReady().then(async () => {
       createOfflineTranscriber: async () => { modelInitializations++; return async hex => { transcriptionCalls++; assert.equal(hex, '1234'); return '离线识别文本' } },
       callReportModel: async (model, prompt, image, options) => {
         prompts.push({ kind: model.kind, prompt, image, options })
+        if (voiceOnly) {
+          assert.equal(model.kind, 'text')
+          assert.ok(prompt.includes('[语音转写] 离线识别文本'), '总结模型必须收到转写后的正文')
+          return JSON.stringify({ hero: { summary: '语音内容：离线识别文本。' }, topics: [{ title: '语音讨论', summary: '离线识别文本', sourceMessageIds: ['r1'] }], quotes: [{ messages: [{ sender: '语音成员', content: '离线识别文本', sourceMessageId: 'r1' }], sourceMessageIds: ['r1'] }], todos: [], unresolved: [] })
+        }
+
         if (!image && failTextTimes-- > 0) throw new Error('模型输出达到长度限制，请缩小日期范围或选择简洁风格后重试')
         if (failImage && image) throw new Error('图片模型不可用')
         if (!image && prompt.includes('你正在补全长记录日报')) {
@@ -302,7 +309,23 @@ app.whenReady().then(async () => {
     await assert.rejects(generateReport({ ...input, targetMember: undefined, conversationId: 'uncached-image' }, voice, () => {}, { ...snapshotData, messages: fixture.filter(message => message.messageType === 3) }), /图片模型不可用/)
     await assert.rejects(generateReport(input, { ...voice, getStatus: async () => ({ state: 'missing' }) }, () => {}, snapshotData), /离线模型/)
     assert.equal(transcriptionCalls, 1, '多次生成均不重复转写')
-    console.log('报告流程自测通过：报告失败后复用语音缓存、缓存命中不加载离线模型、风格持久化与增删改、模板与内容分离、素材分流、长记录分段、HTML/PNG 输出和失败处理。')
+    voiceOnly = true
+    const beforeVoiceOnly = transcriptionCalls
+    const voiceStages = []
+    const voiceMessage = { ...fixture[1], id: 'voice-only', sender: '语音成员', senderId: 'synthetic-voice-member', voice: undefined, reportMedia: { content: 'synthetic voice metadata' } }
+    const voiceReport = await generateReport({ ...input, requestId: 'voice-only', targetMember: undefined, conversationId: 'voice-only@chatroom', contentTypes: ['voice'], style: 'concise' }, voice, event => voiceStages.push(event), { ...snapshotData, conversationId: 'voice-only@chatroom', contentTypes: ['voice'], messages: [voiceMessage], counts: { message: 0, voice: 1, image: 0, video: 0 } }, async message => {
+      assert.equal(message.messageType, 34)
+      return { ...message, voice: { hex: '1234' } }
+    })
+    assert.equal(transcriptionCalls, beforeVoiceOnly + 1, '按需取得语音后实际执行转写')
+    assert.deepEqual(voiceStages.at(-1).media.voice, { total: 1, processed: 1, succeeded: 1, failed: 0, cached: 0 })
+    assert.ok(voiceReport.content.includes('离线识别文本'))
+    const voiceHtml = await fs.readFile(voiceReport.htmlPath, 'utf8')
+    assert.ok(voiceHtml.includes('离线识别文本'), '最终 HTML 包含语音转写内容')
+    assert.ok(voiceHtml.includes('语音成员'), '语音原文引用保留实际发言人')
+    assert.ok(voiceReport.pngPaths.length > 0)
+    voiceOnly = false
+    console.log('报告流程自测通过：报告失败后复用语音缓存、缓存命中不加载离线模型、风格持久化与增删改、模板与内容分离、素材分流、长记录分段、HTML/PNG 输出、语音原文进入总结及报告和失败处理。')
   } finally {
     await fs.rm(temporary, { recursive: true, force: true })
     await fs.rm(moduleDirectory, { recursive: true, force: true })

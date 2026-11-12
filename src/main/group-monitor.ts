@@ -40,12 +40,25 @@ export function observeRoom(state: MonitorState, room: MonitorRoom, messages: Mo
       if (message.serverId && message.serverId !== '0') old.serverId = message.serverId
       if (message.from) old.from = message.from
       if (message.senderId) old.senderId = message.senderId
-      if (message.media) old.media = { ...old.media, ...Object.fromEntries(Object.entries(message.media).filter(([, value]) => value !== undefined)) }
+      if (message.media) {
+        const media = { ...old.media, ...Object.fromEntries(Object.entries(message.media).filter(([, value]) => value !== undefined)) }
+        // Failed or pending reads must never replace a successfully saved file.
+        for (const kind of ['image', 'video'] as const) {
+          if (old.media?.[kind]?.source && !message.media[kind]?.source) media[kind] = old.media[kind]
+          if (kind === 'image' && old.media?.image?.source && !old.media.image.thumbnail && message.media.image?.thumbnail) media.image = old.media.image
+        }
+        old.media = media
+      }
     }
   }
   if (room.messages.length > 5000) room.retentionLimited = true
   room.messages = room.messages.slice(-5000)
   let mediaBytes = 0
+  const senders = new Set(room.messages.map(message => message.senderId).filter(Boolean))
+  for (const [sender, avatar] of Object.entries(room.avatars ?? {})) {
+    if (!senders.has(sender) || mediaBytes + avatar.length > 16 * 1024 * 1024) delete room.avatars![sender]
+    else mediaBytes += avatar.length
+  }
   for (let index = room.messages.length - 1; index >= 0; index--) {
     const media = room.messages[index].media
     if (!media) continue
@@ -70,6 +83,10 @@ export function saveMonitor(directory: string, root: string, key: string, state:
   // Bound retained binary snapshots per account, independently of the message-count cap.
   let accountMediaBytes = 0
   for (const room of [...state.rooms].sort((left, right) => (right.checkedAt || right.startedAt) - (left.checkedAt || left.startedAt))) {
+    for (const [sender, avatar] of Object.entries(room.avatars ?? {})) {
+      if (accountMediaBytes + avatar.length > 64 * 1024 * 1024) delete room.avatars![sender]
+      else accountMediaBytes += avatar.length
+    }
     for (let index = room.messages.length - 1; index >= 0; index--) {
       const media = room.messages[index].media
       if (!media) continue

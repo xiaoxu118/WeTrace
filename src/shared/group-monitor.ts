@@ -6,7 +6,7 @@ export interface MonitorMessage {
   sender: string
   text: string
   type: number
-  media?: Pick<SyncMessage, 'image' | 'voice' | 'sticker' | 'link' | 'forwarded' | 'quote'>
+  media?: Pick<SyncMessage, 'image' | 'video' | 'voice' | 'sticker' | 'link' | 'forwarded' | 'quote'>
   revoked?: boolean
   revokeNoticeId?: string
   from?: 'me' | 'them'
@@ -32,6 +32,7 @@ export interface MonitorRoom {
   captureGap?: boolean
   snapshot?: { ids: string[]; at: number }
   members?: Record<string, string>
+  avatars?: Record<string, string>
   messages: MonitorMessage[]
   error?: string
 }

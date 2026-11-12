@@ -18,11 +18,16 @@ export function retainedRecallMessages(messages: SyncMessage[], room?: MonitorRo
     if (original) byNotice.set(message.id, original)
   }
   const visibleIds = new Set(messages.map(message => message.id))
+  const avatars = new Map(Object.entries(room.avatars ?? {}))
+  for (const message of messages) {
+    if (message.senderId && message.avatar && !message.revoke && !message.recall && ![10000, 10002].includes(message.messageType)) avatars.set(message.senderId, message.avatar)
+  }
   return messages.flatMap(message => {
     const original = byId.get(message.id) || byNotice.get(message.id)
     if (!original) return [message]
     if (message.id !== original.id && visibleIds.has(original.id)) return []
-    return [{ ...message, sender: original.sender, senderId: original.senderId, avatar: message.id === original.id ? message.avatar : undefined,
+    const avatar = original.senderId ? avatars.get(original.senderId) ?? (message.senderId === original.senderId ? message.avatar : undefined) : message.id === original.id ? message.avatar : undefined
+    return [{ ...message, sender: original.sender, senderId: original.senderId, avatar,
       from: original.from || (original.sender === '我' ? 'me' as const : message.from),
       recall: { original: original.text, originalAt: original.at, ...(original.media ? { media: original.media } : {}) } }]
   })

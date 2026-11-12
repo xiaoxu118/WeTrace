@@ -1,12 +1,14 @@
+import { configureRecallMediaStore } from './recall-media-store'
 import { capturePreparedMedia } from './chat-recall-capture'
 import { updateMonitorForSync } from './group-monitor'
 import { conversationCacheAllowed } from './conversation-cache-policy'
 import { configureConversationCachePolicy } from './conversation-cache-policy'
 import { join } from 'node:path'
 import { configureWcdbPaths, testDatabaseConnection } from './wcdb4-client'
-import { queryStickerCdnUrl, queryGroupMonitor, listWechatConversationOptions, loadReportParticipantProfiles, searchWechatChatIndex, readIndexedConversation, controlWechatChatIndex, prepareWechatReportMedia, queryWechatConversationSummary, queryWechatSpeechStats, queryWechatReportMessages, syncWechatRecords } from './wechat-records'
+import { applyWechatCacheExclusions, queryStickerCdnUrl, queryGroupMonitor, listWechatConversationOptions, loadReportParticipantProfiles, searchWechatChatIndex, readIndexedConversation, controlWechatChatIndex, prepareWechatReportMedia, queryWechatConversationSummary, queryWechatSpeechStats, queryWechatReportMessages, syncWechatRecords } from './wechat-records'
 import { onImagePreview, readImagePreview } from './image-preview-cache'
 import type { RecordsCommand, RecordsEvent } from '../shared/records-process'
+import { chatIndexErrorMessage } from '../shared/chat-index'
 
 let statsPath = ''
 const chatDirectory = () => join(statsPath, '..', 'chat-index')
@@ -15,7 +17,7 @@ if (!port) throw new Error('聊天读取进程缺少通信端口')
 const send = (event: RecordsEvent): void => port.postMessage(event)
 onImagePreview((id, data, mime) => send({ type: 'preview', preview: { id, data, mime } }))
 port.on('message', ({ data }: { data: RecordsCommand }) => {
-  if (data.type === 'init') { configureWcdbPaths(data.paths); statsPath = data.paths.statsPath; configureConversationCachePolicy(join(statsPath, '..', 'cache-policy')); return }
+  if (data.type === 'init') { configureWcdbPaths(data.paths); statsPath = data.paths.statsPath; configureRecallMediaStore(join(statsPath, '..', 'recall-media')); configureConversationCachePolicy(join(statsPath, '..', 'cache-policy')); return }
   try {
     if (data.type === 'validate') {
       testDatabaseConnection(data.key, data.root)
@@ -26,6 +28,10 @@ port.on('message', ({ data }: { data: RecordsCommand }) => {
       send({ type: 'result', id: data.id, result: readIndexedConversation(chatDirectory(), data.account, data.key, data.conversationId, data.at, data.limit, data.refresh) })
     } else if (data.type === 'chat-index') {
       send({ type: 'result', id: data.id, result: controlWechatChatIndex(chatDirectory(), data.account, data.key, data.action, data.excludedConversationIds) })
+    } else if (data.type === 'apply-exclusions') {
+      // Read the latest policy, never replay an older full list from a queue.
+      applyWechatCacheExclusions(chatDirectory(), data.account, data.key)
+      send({ type: 'result', id: data.id })
     } else if (data.type === 'conversation-options') {
       send({ type: 'result', id: data.id, result: listWechatConversationOptions(data.account, data.key) })
     } else if (data.type === 'sticker-url') {
@@ -51,6 +57,6 @@ port.on('message', ({ data }: { data: RecordsCommand }) => {
       send({ type: 'result', id: data.id, result: preview ? { id: data.imageId, ...preview } : null })
     }
   } catch (error) {
-    send({ type: 'result', id: data.id, error: error instanceof Error && /database is locked|database table is locked/i.test(error.message) ? `本地数据库正被其他任务占用（操作：${data.type}），请稍后重试` : error instanceof Error ? error.message : '读取聊天记录失败' })
+    send({ type: 'result', id: data.id, error: data.type === 'chat-index' || data.type === 'apply-exclusions' ? chatIndexErrorMessage(error) : error instanceof Error && /database is locked|database table is locked/i.test(error.message) ? '本地数据库正被其他任务占用，请稍后重试' : error instanceof Error ? error.message : '读取聊天记录失败' })
   }
 })

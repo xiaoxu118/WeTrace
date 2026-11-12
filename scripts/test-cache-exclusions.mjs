@@ -29,7 +29,7 @@ try {
     watermark: () => ({ count: 1, maxId: 1, types: 1, times: 1, lengths: 7 }),
     page: store => {
       calls.push(store.room)
-      if (excludeDuringBuild && store.room === room) setImmediate(() => { saveExcludedConversations('account', [room]); index.exclude([room]) })
+      if (excludeDuringBuild && store.room === room) setImmediate(() => { saveExcludedConversations('account', [room]) })
       return [{ id: '1', createTime: 1, type: 1, content: 'private', sender: 'a', isSend: false }]
     },
   }
@@ -80,5 +80,22 @@ try {
   saveExcludedConversations('account', []); excludeDuringBuild = false
   await index.start(source)
   assert.equal(index.messages(room).length, 1, 'removing a group from the list permits indexing again')
+  let toggled = false
+  const toggledSource = { ...source, page: store => {
+    const result = source.page(store)
+    if (!toggled && store.room === room) {
+      toggled = true
+      setImmediate(() => {
+        saveExcludedConversations('account', [room]); index.exclude([room])
+        saveExcludedConversations('account', [])
+      })
+    }
+    return result
+  } }
+  await index.start(toggledSource, true)
+  assert.equal(index.hasConversation(room), false, '快速排除再取消时，已被删除的导入批次不能发布为完整索引')
+  assert.deepEqual(index.messages(room), [])
+  await index.start(source)
+  assert.equal(index.messages(room).length, 1, '下一轮更新重新完整收录')
   console.log('Cache exclusions passed: validation, account isolation, restart, removal, search, in-flight indexing, report cache cleanup and AI/media cache bypass.')
 } finally { index?.close(); rmSync(directory, { recursive: true, force: true }) }

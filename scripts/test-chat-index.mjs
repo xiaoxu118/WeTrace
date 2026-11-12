@@ -20,7 +20,23 @@ try {
     page: (store, after, through, limit) => { pages.push({ store: store.id, after }); return messages.get(store.id).filter(row => Number(row.id) > after && Number(row.id) <= through).slice(0, limit) },
   }
   index = new ChatIndex(directory, 'account', 'secret', 'me')
-  assert.equal((await index.start(source)).state, 'ready')
+  const building = index.start(source)
+  index.db.exec('BEGIN IMMEDIATE')
+  let reader
+  try {
+    reader = new ChatIndex(directory, 'account', 'secret', 'me', { readOnly: true })
+    assert.throws(() => reader.reportSelection('room-b'), /索引尚未完成/, '独立读连接不接受尚未提交的会话')
+    assert.throws(() => reader.reportContent('room-b', 0, 253402300800000, ['message']), /索引尚未完成/)
+  } finally { reader?.close(); index.db.exec('ROLLBACK') }
+  assert.equal((await building).state, 'ready')
+  index.db.exec('BEGIN IMMEDIATE')
+  try {
+    const readOnly = new ChatIndex(directory, 'account', 'secret', 'me', { readOnly: true })
+    try {
+      assert.equal(readOnly.reportSelection('room-a').rows.reduce((sum, row) => sum + row.count, 0), 2, '索引写事务持锁时报告仍能读取已提交的数据')
+      assert.throws(() => readOnly.exclude(['room-a']), /readonly/, '报告连接不能修改索引')
+    } finally { readOnly.close() }
+  } finally { index.db.exec('ROLLBACK') }
   let decrypted = 0
   const unseal = index.unseal.bind(index)
   index.unseal = row => { decrypted++; return unseal(row) }

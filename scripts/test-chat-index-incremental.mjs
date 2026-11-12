@@ -14,7 +14,7 @@ const source = {
   watermark: (_, through) => mark(rows.filter(row => through === undefined || Number(row.id) <= through)),
   page: (_, after, through, limit) => {
     pages.push(after)
-    if (interrupt) { interrupt = false; queueMicrotask(() => index.pause()) }
+    if (interrupt) { interrupt = false; queueMicrotask(() => { assert.equal(index.status().currentMessages, 1000, '大表未完成时仍保存批次进度'); assert.equal(index.status().currentTotal, 2500); index.pause() }) }
     return rows.filter(row => Number(row.id) > after && Number(row.id) <= through).slice(0, limit)
   },
 }
@@ -46,5 +46,11 @@ try {
   assert.equal(index.status().messages, 2503, 'updates received during import are queued')
   // Wait for the queued worker to finish before closing the database.
   for (let i = 0; i < 100 && index.status().state === 'building'; i++) await new Promise(resolve => setImmediate(resolve))
+  const locked = await index.start({ ...source, watermark: () => { throw new Error('database is locked') } })
+  assert.equal(locked.state, 'error')
+  assert.deepEqual(locked.errors, ['本地索引正被其他任务占用，请重新更新索引'])
+  const recovered = await index.start(source)
+  assert.equal(recovered.state, 'ready')
+  assert.deepEqual(recovered.errors, [])
   console.log('Incremental index passed: durable batch checkpoint, restart resume, append-only import, unchanged skip and queued catch-up')
 } finally { index?.close(); rmSync(directory, { recursive: true, force: true }) }

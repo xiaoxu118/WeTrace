@@ -20,3 +20,15 @@ assert.equal(retainedRecallMessages([message('2')],imageRoom)[0].recall.media.im
 const ambiguous={...room,messages:[{...original,revokeNoticeId:undefined},{...original,id:'other',revokeNoticeId:undefined},{id:'notice',type:10002,at:2000,sender:'系统',text:'<revokemsg><newmsgid>100</newmsgid></revokemsg>'}]}
 assert.equal(retainedRecallMessages([message('notice')],ambiguous)[0].recall,undefined,'标识碰撞时不猜测归属')
 console.log('媒体保留与标识碰撞回归通过')
+const senderRoom = { ...room, avatars: { alice: 'original-avatar', bob: 'other-avatar' }, messages: [{ ...original, senderId: 'alice' }] }
+const notice = { ...message('2'), senderId: 'bob', avatar: 'notice-avatar' }
+assert.equal(retainedRecallMessages([notice], senderRoom)[0].avatar, 'original-avatar', '独立撤回通知恢复原发言人头像，不采用通知发起人的头像')
+assert.equal(retainedRecallMessages([{ ...notice, id: '1' }], senderRoom)[0].avatar, 'original-avatar', '同一记录被替换时也保留原头像')
+const legacyAvatars = { ...senderRoom, avatars: undefined }
+const currentSender = { ...message('live'), messageType: 1, senderId: 'alice', sender: '成员甲', avatar: 'current-avatar' }
+assert.equal(retainedRecallMessages([notice, currentSender], legacyAvatars)[0].avatar, 'current-avatar', '旧缓存可以按发言人标识补全当前会话头像')
+assert.equal(retainedRecallMessages([notice, { ...currentSender, senderId: 'someone-else' }], legacyAvatars)[0].avatar, undefined, '同名成员不能混用头像')
+const restored = retainedRecallMessages([notice], senderRoom)
+assert.equal(retainedRecallMessages(restored, legacyAvatars)[0].avatar, 'original-avatar', '重复派生撤回消息不会再次清空头像')
+assert.equal(notice.avatar, 'notice-avatar', '恢复头像不修改原始通知对象')
+console.log('撤回头像回归通过：发言人匹配、同一记录/独立通知、旧缓存补全、同名隔离和重复恢复。')

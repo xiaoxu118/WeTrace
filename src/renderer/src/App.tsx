@@ -1,3 +1,4 @@
+import { preserveConversationAvatars } from '../../shared/conversation-avatars'
 import { ScheduledMessagesPanel } from './components/ScheduledMessagesPanel'
 import { VoiceMessage } from './components/VoiceMessage'
 import { StickerContent } from './components/StickerContent'
@@ -48,8 +49,7 @@ import {
 import type { ReportMessageSelection, ConversationIndexSummary, ReportConversationSnapshot, ReportConversationResponse, GeneratedReport, ReportProgress, DetectResult, KeyStatus, ModelConfig, ModelKind, ModelSource, ApiFormat, ReportContentType, ReportMessagesResult, SaveModelConfigInput, SyncConversation, SyncMessage, SyncResult, VoiceModelStatus, WechatAccount } from '../../shared/types'
 
 import { SafeText, firstGrapheme } from './components/SafeText'
-import { SpeechAnalysis } from './components/SpeechAnalysis'
-import { ChatPatterns } from './components/ChatPatterns'
+import { ChatAnalysis } from './components/ChatAnalysis'
 import { modelPreset, modelProviders, modelKindLabels } from '../../shared/model-presets'
 import { reportMemberKey, reportMemberName, filterReportMessages } from '../../shared/report-messages'
 import { defaultReportStyles, type ReportWritingStyle } from '../../shared/report-styles'
@@ -100,28 +100,39 @@ const settingsNav: { id: SettingsPanel; label: string; icon: LucideIcon }[] = [
 
 function MessageContent({ message, root, conversationId }: { message: SyncMessage; root?: string; conversationId?: string }) {
   const [failedImage, setFailedImage] = useState<string>()
+  const [failedVideo, setFailedVideo] = useState<string>()
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false)
   const [previewImage, setPreviewImage] = useState(message.image)
   const [previewNote, setPreviewNote] = useState('')
   const previewRequest = useRef(0)
+  const previewOpen = useRef(false)
   async function openImagePreview(open: boolean) {
+    if (previewOpen.current === open) return
+    previewOpen.current = open
     const request = ++previewRequest.current
     setImagePreviewOpen(open)
     if (!open) return
     setPreviewImage(message.image)
-    setPreviewNote(message.image?.thumbnail ? '当前为缩略图，正在查找本机原图…' : '正在查找本机原图…')
+    setPreviewNote(message.image?.thumbnail ? '正在读取原图…' : '')
+    if (message.image?.source && message.image.thumbnail === false) return
     if (!root || !conversationId) { setPreviewNote(message.image?.thumbnail ? '本机暂未找到可显示的原图，当前为缩略图。请在微信中打开原图后重试。' : ''); return }
     try {
-      const result = await window.wetrace.getIndexedConversation({ root, conversationId, at: message.createdAt, limit: 10 })
+      const result = await window.wetrace.getIndexedConversation({ root, conversationId, at: message.createdAt, limit: 60 })
       if (request !== previewRequest.current) return
       if (!result.ok) throw new Error(result.error)
-      const image = result.conversation.messages.find(item => item.id === message.id)?.image
+      const found = result.conversation.messages.find(item => item.id === message.id)
+      const image = found?.image ?? found?.recall?.media?.image
       if (!image?.source) throw new Error('未找到可显示的原图')
-      setPreviewImage(image)
+      if (!image.thumbnail || !message.image?.source) setPreviewImage(image)
       setPreviewNote(image.thumbnail ? '本机暂未找到可显示的原图，当前为缩略图。请在微信中打开原图后重试。' : '')
     } catch { if (request === previewRequest.current) setPreviewNote('暂未能重新读取原图，当前显示已加载的图片。请刷新聊天记录后重试。') }
   }
-  if (message.recall) return <div className="message-recalled"><div>{message.recall.media ? <MessageContent message={{ ...message, ...message.recall.media, text: message.recall.original, recall: undefined, revoke: undefined, messageType: message.recall.media.image ? 3 : message.recall.media.voice ? 34 : 1 }} root={root} conversationId={conversationId} /> : <ChatText>{message.recall.original}</ChatText>}</div><small className="message-recall-label">已撤回 · 已保留原文</small></div>
+  if (message.recall) {
+    const retainedLabel = message.recall.media?.video?.source ? '已保留视频'
+      : message.recall.media?.image?.source ? '已保留图片'
+      : ['[图片]', '[视频]'].includes(message.recall.original) ? '已保留消息说明' : '已保留原文'
+    return <div className="message-recalled"><div>{message.recall.media ? <MessageContent message={{ ...message, ...message.recall.media, text: message.recall.original, recall: undefined, revoke: undefined, messageType: message.recall.media.image ? 3 : message.recall.media.video ? 43 : message.recall.media.voice ? 34 : 1 }} root={root} conversationId={conversationId} /> : <ChatText>{message.recall.original}</ChatText>}</div><small className="message-recall-label">已撤回 · {retainedLabel}</small></div>
+  }
   if (message.revoke) return <div className="message-revoke-notice"><SafeText>{message.text}</SafeText><small className="message-recall-label">{message.revoke.unresolvedReason === 'capture-gap' ? '捕获窗口存在缺口，未找到对应原文' : message.revoke.unresolvedReason === 'retention-limit' ? '未找到对应原文，较早内容可能已超出保留范围' : message.revoke.unresolvedReason === 'unlinked' ? '已保存会话消息，但暂无法确定对应原文' : '未捕获到可关联的原文'}</small></div>
   if (message.quote) return <><div><MessageContent message={{ ...message, quote: undefined }} root={root} conversationId={conversationId} /></div><blockquote className="message-quote"><b><SafeText>{message.quote.sender}</SafeText></b><span><ChatText>{message.quote.text}</ChatText></span></blockquote></>
   if (message.forwarded) return <details className="message-forwarded"><summary><SafeText>{message.forwarded.title}</SafeText> · {message.forwarded.entries.length ? `${message.forwarded.entries.length} 条记录` : '内容不可用'}</summary>
@@ -130,9 +141,12 @@ function MessageContent({ message, root, conversationId }: { message: SyncMessag
   </details>
   if (message.messageType === 34) return <VoiceMessage key={`${root}:${conversationId}:${message.id}:${message.createdAt}`} message={message} root={root} conversationId={conversationId ?? ''} />
   if (message.sticker) return <StickerContent key={`${root}:${message.sticker.md5}:${message.sticker.cdnUrl}`} sticker={message.sticker} root={root} />
+  if (message.video) return message.video.source
+    ? <><video className="message-video" src={message.video.source} controls preload="metadata" onError={() => setFailedVideo(message.video?.source)} />{failedVideo === message.video.source && <span className="message-unavailable">视频无法播放，文件可能不完整或编码暂不支持</span>}</>
+    : <span className="message-unavailable">{message.video.unavailable || '视频读取失败'}</span>
   if (message.image) {
     return message.image.source && failedImage !== message.image.source
-      ? <Image className="message-image" classNames={{ root: 'message-image-preview' }} src={message.image.source} alt="聊天图片" loading="lazy" tabIndex={0} aria-label="查看聊天图片大图" preview={{ open: imagePreviewOpen, onOpenChange: open => { void openImagePreview(open) }, src: previewImage?.source, imageRender: original => <>{original}{previewNote && <div className="image-preview-note" role="status">{previewNote}</div>}</> }} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); void openImagePreview(true) } }} onError={() => { setImagePreviewOpen(false); setFailedImage(message.image?.source) }} />
+      ? <Image className="message-image" classNames={{ root: 'message-image-preview' }} src={message.image.source} alt="聊天图片" loading="lazy" tabIndex={0} aria-label="查看聊天图片大图" preview={{ open: imagePreviewOpen, onOpenChange: open => { void openImagePreview(open) }, src: previewImage?.source, imageRender: original => <>{original}{previewNote && <div className="image-preview-note" role="status">{previewNote}</div>}</> }} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); void openImagePreview(true) } }} onError={() => { previewOpen.current = false; previewRequest.current++; setImagePreviewOpen(false); setFailedImage(message.image?.source) }} />
       : <span className="message-unavailable">{message.image.unavailable || '图片读取失败'}</span>
   }
   if (message.link) {
@@ -154,6 +168,7 @@ function sameMessage(left: SyncMessage, right: SyncMessage): boolean {
     && JSON.stringify(left.revoke) === JSON.stringify(right.revoke)
     && left.recall?.original === right.recall?.original && left.recall?.originalAt === right.recall?.originalAt && left.recall?.media === right.recall?.media
     && left.image?.source === right.image?.source && left.image?.unavailable === right.image?.unavailable && left.image?.thumbnail === right.image?.thumbnail
+    && left.video?.source === right.video?.source && left.video?.unavailable === right.video?.unavailable
     && JSON.stringify(left.sticker) === JSON.stringify(right.sticker)
     && left.link?.url === right.link?.url && left.link?.title === right.link?.title && left.link?.description === right.link?.description
     && JSON.stringify(left.forwarded) === JSON.stringify(right.forwarded)
@@ -162,6 +177,11 @@ function sameMessage(left: SyncMessage, right: SyncMessage): boolean {
 
 const ChatMessages = memo(function ChatMessages({ conversation, accountName, accountAvatar, monitorRoom, root }: { conversation: SyncConversation; accountName: string; accountAvatar?: string; monitorRoom?: MonitorRoom; root?: string }) {
   return <><div className="daydiv"><span>{conversation.day}</span></div>{retainedRecallMessages(conversation.messages, monitorRoom).map((message) => {
+    if ([10000, 10002].includes(message.messageType >>> 0) && !message.recall) {
+      return <div className="mrow message-system" key={`${conversation.id}:${message.id}`} data-message-id={message.id}>
+        <div className="message-system-text"><MessageContent message={message} root={root} conversationId={conversation.id} /></div>
+      </div>
+    }
     const senderName = message.sender || (message.from === 'me' ? accountName : conversation.name)
     const avatar = message.from === 'me' ? accountAvatar : message.avatar ?? (conversation.type === 'group' ? undefined : conversation.avatar)
     return <div className={`mrow${message.from === 'me' ? ' me' : ''}`} key={`${conversation.id}:${message.id}`} data-message-id={message.id}>
@@ -696,8 +716,7 @@ export default function App() {
   const [monitorData, setMonitorData] = useState<{ root: string; state: MonitorState }>()
   const [view, setView] = useState<View>('messages')
   const [aiLaunch, setAiLaunch] = useState<AiConversationLaunch>()
-  const [patternConversation, setPatternConversation] = useState<SyncConversation | null>(null)
-  const [speechConversation, setSpeechConversation] = useState<SyncConversation | null>(null)
+  const [analysisConversation, setAnalysisConversation] = useState<SyncConversation | null>(null)
   const [settingsPanel, setSettingsPanel] = useState<SettingsPanel>('db')
   const [selectedId, setSelectedId] = useState('')
   const [query, setQuery] = useState('')
@@ -715,6 +734,7 @@ export default function App() {
   const [captureStage, setCaptureStage] = useState<'idle' | 'listening' | 'ready'>('idle')
   const [keyError, setKeyError] = useState('')
   const [rootDir, setRootDir] = useState<string | null>(() => window.localStorage.getItem('wetrace:selected-account-root'))
+  useEffect(() => setAnalysisConversation(null), [rootDir])
   const [accounts, setAccounts] = useState<WechatAccount[]>([])
   const [profileOpen, setProfileOpen] = useState(false)
   const profileButton = useRef<HTMLButtonElement>(null)
@@ -763,6 +783,7 @@ export default function App() {
   const [reportRunning, setReportRunning] = useState(false)
   const [reportProgress, setReportProgress] = useState<ReportProgress | null>(null)
   const [generatedReport, setGeneratedReport] = useState<GeneratedReport | null>(null)
+  const [copyingReportImage, setCopyingReportImage] = useState(false)
   const reportRequestId = useRef('')
   useEffect(() => window.wetrace.onReportProgress(progress => {
     if (progress.requestId === reportRequestId.current) setReportProgress(current => progress.stage === 'error' ? { ...progress, media: progress.media ?? current?.media, percent: current?.percent ?? 0, failedStep: progress.failedStep ?? current?.detail, detail: progress.detail } : progress)
@@ -891,7 +912,8 @@ export default function App() {
   const reportModel = textModels.find(config => config.id === reportModelId) ?? textModels.find(config => config.isDefault) ?? textModels[0]
   const reportImageModel = imageModels.find(config => config.id === reportImageModelId)
   const selectedReportScope = reportScope?.conversationId === reportConversation?.id ? reportScope : null
-  const reportSnapshotKey = JSON.stringify([rootDir, reportConversation?.id, reportSelectionVersion, selectedReportScope?.items])
+  const latestReportMessage = reportConversation?.messages.at(-1)
+  const reportSnapshotKey = JSON.stringify([rootDir, reportConversation?.id, reportSelectionVersion, selectedReportScope?.items, latestReportMessage?.id, latestReportMessage?.createdAt, selectedReportScope ? undefined : reportStartDate, selectedReportScope ? undefined : reportEndDate])
   const reportData = useMemo<ReportMessagesResult | null>(() => {
     if (!reportSnapshot || reportSnapshot.key !== reportSnapshotKey || !reportConversation || !reportStartDate || !reportEndDate || reportStartDate > reportEndDate) return null
     try {
@@ -931,10 +953,16 @@ export default function App() {
   useEffect(() => {
     const conversationId = reportConversation?.id
     if (!entered || view !== 'summary' || summaryPanel !== 'generate' || !conversationId) return
+    if (!reportStartDate || !reportEndDate || reportStartDate > reportEndDate) {
+      setReportSnapshot(null)
+      setReportDataLoading(false)
+      setReportDataError('请选择有效的开始和结束日期')
+      return
+    }
     let active = true
     let cached = reportLoadCache.current
     if (!cached || cached.key !== reportSnapshotKey) {
-      cached = { key: reportSnapshotKey, promise: window.wetrace.loadReportConversation({ root: rootDir ?? undefined, conversationId, selectedMessages: selectedReportScope?.items }) }
+      cached = { key: reportSnapshotKey, promise: window.wetrace.loadReportConversation({ root: rootDir ?? undefined, conversationId, selectedMessages: selectedReportScope?.items, ...(!selectedReportScope ? { startDate: reportStartDate, endDate: reportEndDate } : {}) }) }
       reportLoadCache.current = cached
     }
     const load = cached
@@ -951,8 +979,12 @@ export default function App() {
       if (response.ok) {
         load.data = response.data
         if (active) setReportSnapshot({ key: load.key, data: response.data })
-      } else if (active) setReportDataError(response.error)
+      } else {
+        if (reportLoadCache.current === load) reportLoadCache.current = null
+        if (active) setReportDataError(response.error)
+      }
     }).catch(error => {
+      if (reportLoadCache.current === load) reportLoadCache.current = null
       if (active) setReportDataError(error instanceof Error ? error.message : '读取完整会话记录失败')
     }).finally(() => { if (active) setReportDataLoading(false) })
     return () => { active = false }
@@ -1353,7 +1385,7 @@ export default function App() {
       if (generation !== syncGeneration.current || currentConversationKey.current !== requestKey) return
       if (!response.ok) throw new Error(response.error)
       followChatBottom.current = true
-      const conversation = { ...selected, ...response.conversation, avatar: response.conversation.avatar ?? selected.avatar }
+      const conversation = preserveConversationAvatars({ ...selected, ...response.conversation }, selected)
       indexedConversationRef.current = { root, conversation }
       setReal(current => current?.account.root === root ? { ...current, conversations: [conversation, ...current.conversations.filter(item => item.id !== conversation.id)] } : current)
       setHistoryEndKey(null)
@@ -1390,7 +1422,7 @@ export default function App() {
       const top = element?.scrollTop ?? 0
       const row = element && Array.from(element.querySelectorAll<HTMLElement>('[data-message-id]')).find(row => row.getBoundingClientRect().bottom > element.getBoundingClientRect().top)
       historyAnchor.current = { key: requestKey, id: row?.dataset.messageId, offset: row && element ? row.getBoundingClientRect().top - element.getBoundingClientRect().top : 0, top, height }
-      const conversation = { ...selected, ...response.conversation, avatar: response.conversation.avatar ?? selected.avatar }
+      const conversation = preserveConversationAvatars({ ...selected, ...response.conversation }, selected)
       if (root) indexedConversationRef.current = { root, conversation, at }
       setReal(current => current && current.account.root === root ? { ...current, conversations: current.conversations.map(item => item.id === conversation.id ? conversation : item) } : current)
       if (conversation.messages.length < selected.messages.length + 60) setHistoryEndKey(requestKey)
@@ -1403,6 +1435,11 @@ export default function App() {
   }
 
   function applySync(data: SyncResult, preserveSelection = false) {
+    if (real?.account.root === data.account.root) {
+      const previous = new Map(real.conversations.map(conversation => [conversation.id, conversation]))
+      data = { ...data, account: { ...data.account, avatar: data.account.avatar || real.account.avatar },
+        conversations: data.conversations.map(conversation => preserveConversationAvatars(conversation, previous.get(conversation.id))) }
+    }
     if (!data.conversations.length) {
       setSyncError('没有读取到可用的会话，请确认微信已登录并同步过消息。')
       setSyncMessage('')
@@ -1590,6 +1627,29 @@ export default function App() {
     setView('summary')
   }
 
+  function openCurrentConversationReport() {
+    if (!selected) return
+    setReportScope(null)
+    setReportConversationId(selected.id)
+    setReportQuery('')
+    setReportType('all')
+    setReportTargetKey('')
+    setReportSelectionVersion(version => version + 1)
+    setChatPicking(false)
+    setChatPicks([])
+    openReportGenerator()
+  }
+
+  async function copyGeneratedReportImage() {
+    if (!generatedReport || copyingReportImage) return
+    setCopyingReportImage(true)
+    try {
+      await window.wetrace.copyReportImages(generatedReport.pngPaths)
+      notify('图片已复制')
+    } catch (error) { notify(error instanceof Error ? error.message : '复制图片失败') }
+    finally { setCopyingReportImage(false) }
+  }
+
   function editReportStyle(style?: ReportWritingStyle) {
     setReportStyleEditingId(style?.builtin ? undefined : style?.id)
     setReportStyleName(style?.builtin ? `${style.name}（自定义）` : style?.name ?? '')
@@ -1637,7 +1697,7 @@ export default function App() {
     }
     if (reportContent.image && !reportImageModel) return notify('已勾选图片内容，请选择图片理解模型，或取消勾选图片')
     if (reportDataLoading) return notify('正在加载会话记录，请稍候')
-    if (reportDataError) return notify(`会话索引读取失败：${reportDataError}`)
+    if (reportDataError) return notify(`会话记录读取失败：${reportDataError}`)
     const selectedTypes = reportContentTypes.filter(item => reportContent[item.id]).map(item => item.id)
     if (!reportData || reportData.conversationId !== reportConversation.id || reportData.startDate !== reportStartDate || reportData.endDate !== reportEndDate || reportData.contentTypes.join(',') !== selectedTypes.join(',')) {
       return notify('会话记录尚未加载完成，请稍候')
@@ -1829,8 +1889,7 @@ export default function App() {
               </div>
 
               <div className="chat-col">
-                {patternConversation && <ChatPatterns key={`${rootDir}:${patternConversation.id}`} conversation={patternConversation} root={rootDir ?? undefined} onClose={() => setPatternConversation(null)} />}
-                {speechConversation && <SpeechAnalysis key={`${rootDir}:${speechConversation.id}`} conversation={speechConversation} root={rootDir ?? undefined} accountName={accountName} onClose={() => setSpeechConversation(null)} />} 
+                {analysisConversation && <ChatAnalysis key={`${rootDir}:${analysisConversation.id}`} conversation={analysisConversation} root={real?.account.root ?? rootDir ?? undefined} onClose={() => setAnalysisConversation(null)} />}
                 {selected ? <>
                 <div className="chat-head">
                   <ProfileAvatar name={selected.name} avatar={selected.avatar} className="av" />
@@ -1843,13 +1902,13 @@ export default function App() {
                       }</div>
                   </div>
                   <div className="ops">
+                    {selected.type !== 'official' && <ActionButton className="speech-entry" onClick={openCurrentConversationReport}><FileText size={14} />生成报告</ActionButton>}
                     <button type="button" className="speech-entry" disabled={!real?.account.root} title="关联当前会话，发送问题后按需查询聊天记录" onClick={() => {
                       setAiLaunch({ id: crypto.randomUUID(), root: real!.account.root, context: conversationAiContext(selected) })
                       setView('ai')
                     }}><Sparkles size={14} />问 AI</button>
                     <button type="button" className="speech-entry" aria-pressed={chatPicking} onClick={() => { setChatPicking(value => !value); setChatPicks([]) }}>选择消息生成报告</button>
-                    <button type="button" className="speech-entry" onClick={() => setPatternConversation(selected)}>聊天脉络</button>
-                    {selected.type === 'group' && <button type="button" className="speech-entry" onClick={() => setSpeechConversation(selected)}>发言分析</button>}
+                    <ActionButton className="speech-entry" onClick={() => setAnalysisConversation(selected)}>聊天分析</ActionButton>
                   </div>
                 </div>
 
@@ -1985,9 +2044,10 @@ export default function App() {
                           {selectedReportScope ? <span className="report-selection-dates">{reportStartDate} 至 {reportEndDate} · 按所选消息确定</span> : reportDatePreset === 'custom' && <div className="date-range"><Input className="inp" type="date" aria-label="报告开始日期" value={reportStartDate} max={reportEndDate} onChange={event => { setReportStartDate(event.target.value); setReportDatePreset('custom') }} /><span>至</span><Input className="inp" type="date" aria-label="报告结束日期" value={reportEndDate} min={reportStartDate} max={toDateInput(new Date())} onChange={event => { setReportEndDate(event.target.value); setReportDatePreset('custom') }} /></div>}
                         </div>
                       </Field>
-                      <Field title="内容类型" hint={!reportConversation ? '请先选择会话' : !reportStartDate || !reportEndDate || reportStartDate > reportEndDate ? '请选择有效的日期范围' : !Object.values(reportContent).some(Boolean) ? '请至少选择一种内容类型' : reportDataLoading ? '正在读取本地索引信息…' : reportDataError ? `会话索引读取失败：${reportDataError}` : reportData ? `已从本地记录筛选，已勾选 ${reportSelectedCount} 条` : '等待读取完整记录'}>
+                      <Field title="内容类型" hint={!reportConversation ? '请先选择会话' : !reportStartDate || !reportEndDate || reportStartDate > reportEndDate ? '请选择有效的日期范围' : !Object.values(reportContent).some(Boolean) ? '请至少选择一种内容类型' : reportDataLoading ? '正在读取会话记录…' : reportDataError ? `会话记录读取失败：${reportDataError}` : reportData ? `已从本地记录筛选，已勾选 ${reportSelectedCount} 条` : '等待读取完整记录'}>
+                        {reportDataError && <Alert type="error" showIcon title="会话记录读取失败" description={reportDataError} action={<ActionButton type="button" className="btn sm" onClick={() => setReportSelectionVersion(version => version + 1)}>重新读取记录</ActionButton>} />}
                         <div className="report-checks">
-                          {reportContentTypes.map(item => <label className={`report-check${reportContent[item.id] ? ' on' : ''}`} key={item.id}><input type="checkbox" checked={reportContent[item.id]} onChange={() => setReportContent(current => ({ ...current, [item.id]: !current[item.id] }))} /><span className="report-check-copy"><span className="report-check-title"><b>{item.label}</b><span className="report-count">{reportData ? `${reportContentCounts[item.id]} 条` : '—'}</span></span><small>{item.hint}</small></span></label>)}
+                          {reportContentTypes.map(item => <label className={`report-check${reportContent[item.id] ? ' on' : ''}`} key={item.id}><input type="checkbox" checked={reportContent[item.id]} onChange={() => setReportContent(current => ({ ...current, [item.id]: !current[item.id] }))} /><span className="report-check-copy"><span className="report-check-title"><b>{item.label}</b><span className="report-count">{reportDataLoading ? '加载中' : reportDataError ? '读取失败' : reportData ? `${reportContentCounts[item.id]} 条` : '—'}</span></span><small>{item.hint}</small></span></label>)}
                         </div>
                       </Field>
                       <div className="report-model-row has-image-model">
@@ -2046,8 +2106,7 @@ export default function App() {
                         </div>
                       </Field>
                     </div>
-                    <div className="report-template-note"><span className="template-badge">{reportTemplate.name}</span><p>{reportTemplate.description}</p><div>{reportTemplate.features.map(section => <span key={section}>{section}</span>)}</div></div>
-                    <div className="report-submit"><div><b>默认同时输出 HTML 和 PNG 两种文件</b><span>文本及语音转写发送至语言模型，图片发送至图片理解模型；视频仅统计。</span></div><ActionButton type="button" className="btn primary" disabled={reportRunning || reportStyleEditing} onClick={() => void generateReport()}><FileText size={14} />{reportRunning ? '等待当前任务完成' : '生成报告'}</ActionButton></div>
+                    <div className="report-submit"><div><b>默认同时输出 HTML 和 PNG 两种文件</b><span>文本及语音转写发送至语言模型，图片发送至图片理解模型；视频仅统计。</span></div><ActionButton type="button" className="btn primary" disabled={reportRunning || reportStyleEditing || reportDataLoading || !reportData} onClick={() => void generateReport()}><FileText size={14} />{reportRunning ? '等待当前任务完成' : '生成报告'}</ActionButton></div>
                   </div>
                 </div>
                 <aside className="report-progress-panel" aria-label="报告生成进度" aria-live="polite">
@@ -2084,7 +2143,7 @@ export default function App() {
                     <p>任务编号：{reportProgress.requestId}</p>
                     {reportProgress.diagnosticPath && <button type="button" onClick={() => void window.wetrace.openReport(reportProgress.diagnosticPath!).catch(error => notify(error instanceof Error ? error.message : '打开诊断日志失败'))}>打开诊断日志</button>}
                   </div>}
-                  {generatedReport && <div className="report-output"><ActionButton className="btn primary" onClick={() => void window.wetrace.openReport(generatedReport.htmlPath).catch(error => notify(String(error)))}>打开报告</ActionButton>{generatedReport.pngPaths.map((file, index) => <ActionButton className="btn sm" key={file} onClick={() => void window.wetrace.openReport(file).catch(error => notify(String(error)))}>查看 PNG{generatedReport.pngPaths.length > 1 ? ` ${index + 1}` : ''}</ActionButton>)}<ActionButton type="button" className="btn sm" onClick={() => void window.wetrace.revealReport(generatedReport.htmlPath).catch(error => notify(error instanceof Error ? error.message : '打开文件夹失败'))}><FolderOpen size={14} />打开所在文件夹</ActionButton><ActionButton type="button" className="btn sm" onClick={() => setSummaryPanel('home')}>查看全部报告</ActionButton><small className="report-output-path">保存位置：{generatedReport.htmlPath.replace(/[\\/][^\\/]+$/, '')}</small>{generatedReport.warnings.length > 0 && <details><summary>{generatedReport.warnings.length} 条素材处理说明</summary>{generatedReport.warnings.map((warning, index) => <p key={index}>{warning}</p>)}</details>}</div>}
+                  {generatedReport && <div className="report-output"><ActionButton className="btn primary" disabled={copyingReportImage || !generatedReport.pngPaths.length} onClick={() => void copyGeneratedReportImage()}>{copyingReportImage ? '复制中…' : '复制图片'}</ActionButton><ActionButton type="button" className="btn sm" onClick={() => void window.wetrace.revealReport(generatedReport.htmlPath).catch(error => notify(error instanceof Error ? error.message : '打开文件夹失败'))}><FolderOpen size={14} />打开所在文件夹</ActionButton><small className="report-output-path">保存位置：{generatedReport.htmlPath.replace(/[\\/][^\\/]+$/, '')}</small>{generatedReport.warnings.length > 0 && <details><summary>{generatedReport.warnings.length} 条素材处理说明</summary>{generatedReport.warnings.map((warning, index) => <p key={index}>{warning}</p>)}</details>}</div>}
                 </aside>
               </div>
             )}

@@ -175,7 +175,8 @@ export function presentMessage(type: number, content: string, images: Map<string
       return { text: title || '[链接或文件]' }
     }
     case 34: return { text: '[语音]' }
-    case 43: return { text: '[视频]' }
+    case 43:
+    case 62: return { text: '[视频]' }
     case 47: {
       const emoji = /<emoji\b([^>]*)>/i.exec(content)?.[1] || ''
       const rawHash = /\bmd5\s*=\s*["']([a-f\d]{32})["']/i.exec(emoji)?.[1] || tag(content, 'md5')

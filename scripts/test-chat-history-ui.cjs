@@ -14,7 +14,7 @@ data.conversations = [{...data.conversations[0],id:'friend',type:'friend',name:'
 api.onAiProgress = () => () => {}
 const queries = []; let fail = true
 api.queryConversationSummary = async () => ({ok:true,data:{total:messages.length,firstAt:1000,lastAt:messages.length*1000}})
-api.getIndexedConversation = async query => { queries.push(query); if(fail){fail=false;return {ok:false,error:'模拟失败，请重试'}};return {ok:true,conversation:{...data.conversations[0],records:'185',messages:messages.slice(-query.limit)}} }
+api.getIndexedConversation = async query => { queries.push(query); if(fail){fail=false;return {ok:false,error:'模拟失败，请重试'}};return {ok:true,conversation:{...data.conversations[0],records:'185',messages:messages.slice(-query.limit).map(({avatar,...message})=>message)}} }
 let changed = () => {}; let refreshes = 0; let holdNext=false; let releaseHeld
 api.onDatabaseChanged = callback => { changed = callback; return () => {} }
 api.syncWechat = async () => { refreshes++; const response={ok:true,data:{...data,conversations:[{...data.conversations[0],messages:messages.slice(-60)}],syncedAt:new Date().toISOString()}};if(holdNext){holdNext=false;await new Promise(resolve=>{releaseHeld=resolve})}return response }
@@ -54,6 +54,7 @@ contextBridge.exposeInMainWorld('wetrace', api)
       await load()
       await until(`document.querySelectorAll('.chat-scroll .mrow').length===${count}`)
       assert.ok(await run(`window.existingHistoryRows.every(saved => {const row = Array.from(document.querySelectorAll('.chat-scroll .mrow')).find(item => item.dataset.messageId === saved.id); return row === saved.row && saved.avatar && row.querySelector('.profile-avatar img') === saved.avatar})`), '加载历史应复用已有消息和头像元素，避免重新加载')
+      assert.equal(await run(`document.querySelectorAll('.chat-scroll .mrow .profile-avatar img').length`), count, '历史接口暂缺头像时，同一联系人已有头像应复用到所有消息')
       await run(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`)
       assert.ok(await run(`(()=>{const row=Array.from(document.querySelectorAll('.chat-scroll .mrow')).find(row=>row.querySelector('.bubble').textContent===window.historyAnchor.text);return Math.abs(row.getBoundingClientRect().top-window.historyAnchor.top)<2})()`), '加载更早消息后保持当前阅读位置')
     }

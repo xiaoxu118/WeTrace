@@ -10,7 +10,20 @@ app.whenReady().then(async () => {
   let source = reference.slice(begin, end)
   source = source.replace("contextBridge.exposeInMainWorld('wetrace', api)", `
 let fixtureIndexState = 'ready'; let excludedConversationIds = []; const fixtureActions = []; api.listConversationOptions = async () => ({ok:true,conversations:[{id:'secret@chatroom',name:'不收录的群',type:'group'},{id:'public@chatroom',name:'正常群',type:'group'},{id:'friend',name:'联系人',type:'friend'}]})
-api.controlChatIndex = async query => { fixtureActions.push(query.action); if(query.action==='exclusions') { await new Promise(resolve=>setTimeout(resolve,500)); excludedConversationIds=query.excludedConversationIds; } if (query.action === 'pause') fixtureIndexState = 'paused'; if (query.action === 'start' || query.action === 'rebuild') fixtureIndexState = 'building'; return { ok:true, data: { excludedConversationIds,state:fixtureIndexState, messages:125000, conversations:350, completedStores:350,totalStores:350,current:'',updatedAt:new Date().toISOString(),errors:[] } } }
+let delayStatus = false; let releaseStatus; let fixtureErrors = []
+api.setIndexErrors = async errors => { fixtureErrors = errors }
+api.holdIndexStatus = async () => { delayStatus = true }
+api.indexStatusPending = async () => !!releaseStatus
+api.releaseIndexStatus = async () => { const release = releaseStatus; releaseStatus = undefined; delayStatus = false; release?.() }
+api.controlChatIndex = async query => {
+  fixtureActions.push(query.action)
+  const capturedExclusions = [...excludedConversationIds]
+  if (query.action === 'status' && delayStatus) await new Promise(resolve => { releaseStatus = resolve })
+  if (query.action === 'exclusions') { await new Promise(resolve => setTimeout(resolve, 500)); excludedConversationIds = query.excludedConversationIds }
+  if (query.action === 'pause') fixtureIndexState = 'paused'
+  if (query.action === 'start' || query.action === 'rebuild') fixtureIndexState = 'building'
+  return { ok: true, data: { excludedConversationIds: query.action === 'status' ? capturedExclusions : excludedConversationIds, state: fixtureIndexState, messages: 125000, conversations: 350, completedStores: 350, totalStores: 350, current: '', updatedAt: new Date().toISOString(), errors: fixtureErrors } }
+}
 api.searchChatIndex = async query => ({ok:true,matches:[{conversationId:'history@chatroom',conversationName:'历史群聊',id:'old',createdAt:Date.now(),text:'很久以前的目标记录'}]})
 api.getIndexedConversation = async query => ({ok:true,conversation:{...data.conversations[0],id:query.conversationId,name:'历史群聊',messages:[{...data.conversations[0].messages[0],id:'old',text:'很久以前的目标记录'}]}})
 api.indexTestActions = async () => fixtureActions
@@ -24,7 +37,7 @@ contextBridge.exposeInMainWorld('wetrace', api)
     window.webContents.on('console-message', (_event, _level, message) => console.log('renderer:', message))
     await window.loadFile(path.resolve('out/renderer/index.html'))
     const run = code => window.webContents.executeJavaScript(code)
-    const until = async code => { for(let i=0;i<80;i++){if(await run(code))return;await new Promise(resolve=>setTimeout(resolve,100))} throw new Error('UI timeout: '+code+' '+await run('document.body.innerText.slice(0,1500)')) }
+    const until = async code => { for(let i=0;i<160;i++){if(await run(code))return;await new Promise(resolve=>setTimeout(resolve,100))} throw new Error('UI timeout: '+code+' '+await run('document.body.innerText.slice(0,1500)')) }
     await until(`!!document.querySelector('.conv-list')`)
     await run(`document.querySelector('button[aria-label="设置"]').click()`)
     await until(`!!document.querySelector('.chat-index-panel') && document.querySelector('.chat-index-panel').textContent.includes('125,000')`)
@@ -66,11 +79,28 @@ contextBridge.exposeInMainWorld('wetrace', api)
     await search('')
     await run(`Array.from(document.querySelectorAll('.chat-index-panel button')).find(button=>button.textContent==='更新索引').click()`)
     await until(`document.querySelector('.chat-index-panel').textContent.includes('暂停建立')`)
+    await run(`window.wetrace.holdIndexStatus()`)
+    await until(`window.wetrace.indexStatusPending()`)
+    await search('不收录')
+    await until(`document.querySelectorAll('.cache-exclusion-results .cache-exclusion-row').length===1`)
+    await run(`document.querySelector('.cache-exclusion-results button').click()`)
+    await until(`document.querySelectorAll('.cache-excluded-groups .cache-exclusion-row').length===1`)
+    await run(`window.wetrace.releaseIndexStatus()`)
+    await run(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`)
+    assert.equal(await run(`document.querySelectorAll('.cache-excluded-groups .cache-exclusion-row').length`), 1, '迟到的旧轮询结果不能撤销刚保存的排除名单')
+    await run(`document.querySelector('.cache-excluded-groups button').click()`)
+    await until(`document.querySelectorAll('.cache-excluded-groups .cache-exclusion-row').length===0`)
+    await search('')
     await run(`Array.from(document.querySelectorAll('.chat-index-panel button')).find(button=>button.textContent==='暂停建立').click()`)
     await until(`document.querySelector('.chat-index-panel').textContent.includes('继续建立')`)
     await run(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`)
     await fs.mkdir('.screenshots',{recursive:true})
     await fs.writeFile('.screenshots/all-chat-index-settings.png',(await window.webContents.capturePage()).toPNG())
+    await run(`window.wetrace.setIndexErrors(['fixture@chatroom: database is locked'])`)
+    await run(`Array.from(document.querySelectorAll('.chat-index-panel button')).find(button=>button.textContent==='继续建立').click()`)
+    await until(`document.querySelector('.chat-index-panel').textContent.includes('索引更新失败')`)
+    assert.equal(await run(`document.querySelector('.chat-index-panel').textContent.includes('database is locked') || document.querySelector('.chat-index-panel').textContent.includes('fixture@chatroom') || document.querySelector('.chat-index-panel').textContent.includes('索引处理说明')`), false, '旧错误也转换为明确的中文失败原因，不显示群编号')
+    assert.ok(await run(`document.querySelector('.chat-index-panel').textContent.includes('本地索引正被其他任务占用')`))
     await run(`document.querySelector('button[aria-label="消息"]').click()`)
     await run(`(()=>{const input=document.querySelector('input[aria-label="搜索联系人、群聊、聊天记录"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'目标记录');input.dispatchEvent(new Event('input',{bubbles:true}))})()`)
     await until(`!!document.querySelector('.indexed-search-match')`)

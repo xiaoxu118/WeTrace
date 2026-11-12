@@ -4,6 +4,7 @@ const path = require('node:path')
 const assert = require('node:assert/strict')
 const { stripTypeScriptTypes } = require('node:module')
 const { pathToFileURL } = require('node:url')
+const { createHash } = require('node:crypto')
 ;(async () => {
   const directory = path.resolve('.cache/report-loading-test')
   await fs.mkdir(directory, { recursive: true })
@@ -12,22 +13,36 @@ const { pathToFileURL } = require('node:url')
   let fingerprintReads = 0
   let indexReady = true
   let indexedRows = []
+  let emptySelection = false
+  let contentError
+  let indexError
+  let rawError
+  let pageHook = () => {}
+  let realChatIndex
+  let useRealIndex = false
+  let allowProfiles = false
   const rows = Array.from({ length: 700 }, (_, i) => ({ id: String(i), type: i === 0 ? 3 : i === 1 ? 34 : 1, createTime: 1700000000 + i, content: '测试内容', sender: 'sender', isSend: false, serverId: String(i + 1) }))
+  let sourceRows = rows
+  const summary = items => items.reduce((result, row) => ({ total: result.total + 1, firstAt: result.firstAt === null ? row.createTime * 1000 : Math.min(result.firstAt, row.createTime * 1000), lastAt: result.lastAt === null ? row.createTime * 1000 : Math.max(result.lastAt, row.createTime * 1000) }), { total: 0, firstAt: null, lastAt: null })
   globalThis.reportLoadingFixture = {
     findSilentMembers: () => [], queryConversationIndexSummary: () => {}, querySpeechIndex: () => {}, sourceFingerprint: () => { fingerprintReads++; return fingerprint },
     ChatIndex: class {
+      constructor(...args) { if (useRealIndex) return new realChatIndex(...args) }
       exclude() {}
-      hasConversation() { return indexReady }
-      reportContent() { return { rows: indexedRows, counts: { message: indexedRows.length, voice: 0, image: 0, video: 0 } } }
+      close() {}
+      hasConversation() { if (indexError) throw indexError; return indexReady }
+      reportContent() { if (contentError) throw contentError; return { rows: indexedRows, counts: { message: indexedRows.length, voice: 0, image: 0, video: 0 } } }
       selectedReportMessages() { return indexedRows }
+      summary() { return summary(indexedRows.length ? indexedRows : rows) }
       isFresh() { throw new Error('报告选择不应检查整个微信数据目录') }
-      reportSelection() { return { revision: 'indexed-version', rows: rows.map(row => ({ id: row.id, time: row.createTime * 1000, type: row.type, sender: row.sender, count: 1 })) } }
+      reportSelection() { return { revision: 'indexed-version', summary: summary(rows), rows: (emptySelection ? [] : rows).map(row => ({ id: row.id, time: row.createTime * 1000, type: row.type, sender: row.sender, count: 1 })) } }
     },
     Wcdb4Client: class {
-      getMessages(room, limit, offset) { counters.pages++; return rows.slice().reverse().slice(offset, offset + limit).reverse() }
+      aggregateConversation() { return summary(sourceRows) }
+      getMessages(room, limit, offset) { counters.pages++; pageHook(); if (rawError) throw rawError; return sourceRows.slice().sort((a, b) => b.createTime - a.createTime).slice(offset, offset + limit).reverse() }
       getDisplayNames() { return new Map([['sender', '群成员']]) }
       getGroupNicknames() { return new Map() }
-      getProfiles() { counters.avatars++; throw new Error('报告选择不应读取头像') }
+      getProfiles(ids) { counters.avatars++; if (!allowProfiles) throw new Error('报告选择不应读取头像'); return new Map(ids.map(id => [id, { nickname: '测试昵称', avatar: 'data:image/png;base64,synthetic-avatar' }])) }
       getVoiceData() { counters.voices++; return { hex: '1234' } }
     },
     localImages: () => { counters.images++; return new Map() },
@@ -43,10 +58,12 @@ const { pathToFileURL } = require('node:url')
     })
     source = rewrite(source)
     for (const [file, name] of Object.entries(modules)) await fs.writeFile(path.join(directory, name), stripTypeScriptTypes(rewrite(await fs.readFile(file, 'utf8'))))
-    const { configureConversationCachePolicy } = await import(pathToFileURL(path.join(directory, 'policy.mjs')).href)
+    const { configureConversationCachePolicy, saveExcludedConversations } = await import(pathToFileURL(path.join(directory, 'policy.mjs')).href)
     configureConversationCachePolicy(path.join(directory, 'policy'))
     source = source.replace("import { ChatIndex } from './chat-index'", 'const { ChatIndex } = globalThis.reportLoadingFixture')
-    await fs.writeFile(path.join(directory, 'chat-index.mjs'), stripTypeScriptTypes(await fs.readFile('src/main/chat-index.ts', 'utf8')))
+    await fs.writeFile(path.join(directory, 'chat-index-shared.mjs'), stripTypeScriptTypes(await fs.readFile('src/shared/chat-index.ts', 'utf8')))
+    await fs.writeFile(path.join(directory, 'chat-index.mjs'), stripTypeScriptTypes((await fs.readFile('src/main/chat-index.ts', 'utf8')).replace("'../shared/chat-index.ts'", "'./chat-index-shared.mjs'")))
+    realChatIndex = (await import(pathToFileURL(path.join(directory, 'chat-index.mjs')).href)).ChatIndex
     source = source.replace(/import \{ findSilentMembers \} from '[^']+'/g, 'const { findSilentMembers } = globalThis.reportLoadingFixture')
     source = source.replace(/import \{ sourceFingerprint \} from '[^']+'/, 'const { sourceFingerprint } = globalThis.reportLoadingFixture')
     source = source.replace(/import \{ queryConversationIndexSummary, querySpeechIndex, sourceFingerprint \} from '[^']+'/, 'const { queryConversationIndexSummary, querySpeechIndex, sourceFingerprint } = globalThis.reportLoadingFixture')
@@ -60,7 +77,7 @@ const { pathToFileURL } = require('node:url')
     await fs.writeFile(path.join(directory, 'records.mjs'), stripTypeScriptTypes(source))
     await fs.writeFile(path.join(directory, 'cache.mjs'), stripTypeScriptTypes(await fs.readFile('src/main/report-record-cache.ts', 'utf8')))
     await fs.writeFile(path.join(directory, 'filter.mjs'), stripTypeScriptTypes(await fs.readFile('src/shared/report-messages.ts', 'utf8')))
-    const { queryWechatReportMessages, prepareWechatReportMedia } = await import(pathToFileURL(path.join(directory, 'records.mjs')).href)
+    const { queryWechatReportMessages, prepareWechatReportMedia, queryWechatSpeechStats, queryWechatConversationSummary, searchWechatChatIndex, readIndexedConversation } = await import(pathToFileURL(path.join(directory, 'records.mjs')).href)
     const account = { root: '/test', wxid: 'me' }
     const query = { conversationId: 'chat@chatroom', startDate: '1970-01-01', endDate: '9999-12-31', contentTypes: ['message', 'voice', 'image', 'video'], deferMedia: true }
     const start = performance.now()
@@ -94,10 +111,56 @@ const { pathToFileURL } = require('node:url')
     queryWechatReportMessages(account, 'key', { ...query, metadataOnly: true }, undefined, '/mock-index')
     assert.equal(counters.pages, beforeMetadata.pages)
     indexReady = false
-    assert.throws(() => queryWechatReportMessages(account, 'key', { ...query, metadataOnly: true }, undefined, '/mock-index'), /索引尚未完成/)
-    assert.equal(counters.pages, beforeMetadata.pages, '索引未完成时明确提示，不偷偷扫描历史')
+    const fallback = queryWechatReportMessages(account, 'key', { ...query, metadataOnly: true }, undefined, '/mock-index')
+    assert.equal(fallback.messages.length, 700)
+    assert.equal(fallback.indexRevision, undefined)
+    assert.equal(fallback.messages[2].text, '测试内容', '回退保留原文供报告快照生成使用')
+    assert.equal(counters.pages, beforeMetadata.pages + 2)
+    indexError = new Error('database is locked')
+    assert.equal(queryWechatReportMessages(account, 'key', { ...query, metadataOnly: true }, undefined, '/mock-index').messages.length, 700)
+    assert.equal(queryWechatReportMessages(account, 'key', query, undefined, '/mock-index').messages.length, 700)
+    indexError = undefined
+    rawError = new Error('原始记录读取失败')
+    assert.throws(() => queryWechatReportMessages(account, 'key', query, undefined, '/mock-index'), /原始记录读取失败/)
+    rawError = undefined
+    const originalNow = Date.now
+    let now = 0
+    Date.now = () => now
+    pageHook = () => { now += 120_001 }
+    try {
+      assert.throws(() => queryWechatReportMessages(account, 'key', query, undefined, '/mock-index'), /原始记录超时/)
+    } finally { Date.now = originalNow; pageHook = () => {} }
+    assert.equal(queryWechatReportMessages(account, 'key', query, undefined, '/mock-index').messages.length, 700, '失败或超时后可重试')
     indexReady = true
+    emptySelection = true
+    assert.equal(queryWechatReportMessages(account, 'key', { ...query, metadataOnly: true }, undefined, '/mock-index').messages.length, 700, '空索引也回退原始数据')
+    emptySelection = false
+    assert.equal(queryWechatReportMessages(account, 'key', query, undefined, '/mock-index').messages.length, 700, '正文索引未命中时回退')
+    contentError = new Error('database is locked')
+    assert.equal(queryWechatReportMessages(account, 'key', query, undefined, '/mock-index').messages.length, 700)
+    contentError = new Error('会话索引已更新，请重新选择会话后生成报告')
+    assert.throws(() => queryWechatReportMessages(account, 'key', { ...query, indexRevision: 'old' }, undefined, '/mock-index'), /索引已更新/)
+    contentError = undefined
+    saveExcludedConversations(account.root, [query.conversationId])
+    assert.equal(queryWechatReportMessages(account, 'key', { ...query, metadataOnly: true }, undefined, '/mock-index').messages.length, 700, '排除索引后仍可直接读取原始记录生成报告')
+    saveExcludedConversations(account.root, [])
+    const today = '2026-11-11', yesterday = '2026-11-10'
+    sourceRows = [...rows, ...[yesterday, today].map((day, i) => ({ ...rows[2], id: 'recent-' + i, content: '近期测试消息 ' + i, createTime: new Date(day + 'T12:00:00').getTime() / 1000 }))]
+    const stale = queryWechatReportMessages(account, 'key', { ...query, metadataOnly: true }, undefined, '/mock-index')
+    assert.equal(stale.indexRevision, undefined, '历史索引有数据但落后于原始记录时仍须回退')
+    const { filterReportMessages } = await import(pathToFileURL(path.join(directory, 'filter.mjs')).href)
+    for (const day of [today, yesterday]) {
+      const recent = filterReportMessages(stale.messages, { ...query, startDate: day, endDate: day })
+      assert.equal(recent.messages.length, 1, day + ' 的新增记录可用于报告')
+      assert.ok(recent.messages[0].text.startsWith('近期测试消息'))
+    }
+    const directRecent = queryWechatReportMessages(account, 'key', { ...query, startDate: yesterday, endDate: today }, undefined, '/mock-index')
+    assert.equal(directRecent.messages.length, 2, '正文查询也不能沿用过期索引')
+    sourceRows = [...rows.slice(0, -1), { ...rows.at(-1), createTime: new Date(today + 'T12:00:00').getTime() / 1000 }]
+    assert.equal(filterReportMessages(queryWechatReportMessages(account, 'key', { ...query, metadataOnly: true }, undefined, '/mock-index').messages, { ...query, startDate: today, endDate: today }).messages.length, 1, '条数相同但最新时间变化也判定为过期')
+    sourceRows = rows
     indexedRows = Array.from({ length: 180000 }, (_, i) => ({ ...rows[2], id: String(i), createTime: 1700000000 + i }))
+    sourceRows = indexedRows
     const fullHistory = queryWechatReportMessages(account, 'key', query, undefined, '/mock-index')
     assert.equal(fullHistory.messages.length, 180000, '全部历史查询不会因展开大数组导致调用栈溢出')
     assert.equal(fullHistory.messages[0].id, '0')
@@ -112,6 +175,30 @@ const { pathToFileURL } = require('node:url')
     let version = 0
     for (let i = 0; i < 2; i++) changingCache.get('changing', () => String(version), () => { reads++; version++; return first })
     assert.equal(reads, 4, '读取期间变化的数据不会作为有效缓存')
+    const lockDirectory = path.join(directory, 'locked-index')
+    const writer = new realChatIndex(lockDirectory, account.root, 'key', account.wxid)
+    const lockRows = [1, 2].map(id => ({ ...rows[2], id: String(id), type: 1 }))
+    sourceRows = lockRows
+    const mark = { count: 2, maxId: 2, types: 2, times: lockRows.reduce((sum, row) => sum + row.createTime, 0), lengths: lockRows.reduce((sum, row) => sum + row.content.length, 0) }
+    await writer.start({ stores: () => [{ id: 'fixture-store', room: query.conversationId, tableName: 'fixture', dbPath: 'fixture' }], watermark: () => mark, page: () => lockRows, fingerprint: () => createHash('sha256').update(JSON.stringify([fingerprint, []])).digest('hex') })
+    useRealIndex = true
+    writer.db.exec('BEGIN IMMEDIATE')
+    try {
+      assert.equal(queryWechatConversationSummary(lockDirectory, account, 'key', query.conversationId).total, 2, '统计读取不争用索引写锁')
+      assert.equal(queryWechatSpeechStats(lockDirectory, account, 'key', { conversationId: query.conversationId }).total, 2)
+      assert.equal(searchWechatChatIndex(lockDirectory, account, 'key', '测试内容').length, 2)
+      allowProfiles = true
+      const indexedConversation = readIndexedConversation(lockDirectory, account, 'key', query.conversationId, lockRows[0].createTime * 1000)
+      allowProfiles = false
+      assert.equal(indexedConversation.messages.length, 2)
+      assert.equal(indexedConversation.messages[0].avatar, 'data:image/png;base64,synthetic-avatar', '聊天记录读取可加载发言人头像')
+      assert.equal(queryWechatReportMessages(account, 'key', { ...query, metadataOnly: true }, undefined, lockDirectory).counts.message, 2)
+      saveExcludedConversations(account.root, [query.conversationId])
+      assert.equal(searchWechatChatIndex(lockDirectory, account, 'key', '测试内容').length, 0, '后台尚未清理时也不展示已排除的搜索结果')
+    } finally {
+      writer.db.exec('ROLLBACK'); writer.close(); useRealIndex = false
+      saveExcludedConversations(account.root, [])
+    }
     console.log(`报告加载测试通过：700 条分页记录和 18 万条历史记录，选择阶段零图片解密、零语音读取、零头像读取；缓存命中零历史扫描，变化后刷新，素材按需读取（测试耗时 ${Math.round(performance.now() - start)}ms）。`)
   } finally { delete globalThis.reportLoadingFixture; await fs.rm(directory, { recursive: true, force: true }) }
 })().catch(error => { console.error(error); process.exitCode = 1 })

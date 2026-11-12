@@ -85,3 +85,30 @@ captureChatRecalls(collisionState,conversation([msg('999','本地编号碰巧相
 const collisionNotice=conversation([{...msg('1000','',10002),...presentMessage(10002,'<revokemsg><newmsgid>999</newmsgid></revokemsg>',new Map())}])
 captureChatRecalls(collisionState,collisionNotice,2000)
 assert.equal(collisionNotice.messages[0].recall,undefined,'服务端目标编号不能回退匹配碰巧相同的本地编号')
+
+const avatarState = emptyMonitor()
+const avatarMessage = { ...msg('avatar-original', '头像回归原文', 1, '900001'), from: 'them', sender: '成员甲', senderId: 'alice', avatar: 'data:image/png;base64,synthetic-avatar' }
+captureChatRecalls(avatarState, conversation([avatarMessage]), 1100)
+assert.equal(avatarState.rooms[0].avatars.alice, avatarMessage.avatar)
+assert.equal(Object.keys(avatarState.rooms[0].avatars).length, 1, '头像按发言人保存，避免逐条重复存储')
+const avatarNotice = { ...msg('avatar-notice', '', 10002), from: 'them', senderId: 'bob', avatar: 'notice-avatar', ...presentMessage(10002, '<revokemsg><newmsgid>900001</newmsgid></revokemsg>', new Map()) }
+const avatarRecalled = conversation([avatarNotice])
+captureChatRecalls(avatarState, avatarRecalled, 1200)
+assert.equal(avatarRecalled.messages[0].avatar, avatarMessage.avatar)
+delete avatarState.rooms[0].avatars
+const oldCacheRecalled = conversation([avatarNotice])
+captureChatRecalls(avatarState, oldCacheRecalled, 1300, undefined, senderId => senderId === 'alice' ? avatarMessage.avatar : undefined)
+assert.equal(oldCacheRecalled.messages[0].avatar, avatarMessage.avatar, '旧缓存通过原发言人资料补回头像')
+const { mkdtempSync, rmSync } = await import('node:fs')
+const { tmpdir } = await import('node:os')
+const { join } = await import('node:path')
+const { saveMonitor, loadMonitor } = await import('../src/main/group-monitor.ts')
+const avatarDirectory = mkdtempSync(join(tmpdir(), 'recall-avatar-'))
+try {
+  saveMonitor(avatarDirectory, 'synthetic-account', 'synthetic-secret', avatarState)
+  const reloaded = loadMonitor(avatarDirectory, 'synthetic-account', 'synthetic-secret')
+  const afterRestart = conversation([avatarNotice])
+  captureChatRecalls(reloaded, afterRestart, 1400)
+  assert.equal(afterRestart.messages[0].avatar, avatarMessage.avatar, '重启后加密缓存仍保留原发言人头像')
+} finally { rmSync(avatarDirectory, { recursive: true, force: true }) }
+console.log('撤回头像捕获通过：按发言人去重保存、独立通知恢复、旧缓存补全及重启持久化。')

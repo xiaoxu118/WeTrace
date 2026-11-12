@@ -55,6 +55,7 @@ const api = {
   generateReport: (input: GenerateReportInput): Promise<GenerateReportResponse> => ipcRenderer.invoke('report:generate', input),
   listReports: (): Promise<import('../shared/types').ReportHistoryItem[]> => ipcRenderer.invoke('report:list'),
   revealReport: (file: string): Promise<void> => ipcRenderer.invoke('report:reveal', file),
+  copyReportImages: (files: string[]): Promise<void> => ipcRenderer.invoke('report:copy-image', files),
   openReport: (file: string): Promise<void> => ipcRenderer.invoke('report:open', file),
   onReportProgress: (callback: (progress: ReportProgress) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, progress: ReportProgress) => callback(progress)

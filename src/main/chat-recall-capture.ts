@@ -14,15 +14,28 @@ function captureMedia(message: import('../shared/types').SyncMessage, readPrevie
       ? { ...image, source: `data:${preview.mime};base64,${Buffer.from(preview.data).toString('base64')}` }
       : { unavailable: preview ? '图片超出本地撤回媒体保留上限' : '未捕获到图片内容' }
   }
-  return { image, voice: message.voice?.hex && message.voice.hex.length <= 2 * 1024 * 1024 ? message.voice : undefined, sticker: message.sticker, link: message.link, forwarded: message.forwarded, quote: message.quote }
+  return { image, video: message.video, voice: message.voice?.hex && message.voice.hex.length <= 2 * 1024 * 1024 ? message.voice : undefined, sticker: message.sticker, link: message.link, forwarded: message.forwarded, quote: message.quote }
 }
 
 // Called in the records worker, the only writer of the encrypted capture store.
-export function captureChatRecalls(state: MonitorState, conversation: SyncConversation, now = Date.now(), readPreview?: PreviewReader): void {
+export function captureChatRecalls(state: MonitorState, conversation: SyncConversation, now = Date.now(), readPreview?: PreviewReader, readAvatar?: (senderId: string) => string | undefined): void {
   let room = state.rooms.find(item => item.id === conversation.id)
   if (!room) {
     room = { id: conversation.id, name: conversation.name, enabled: false, startedAt: now, messages: [] }
     state.rooms.push(room)
+  }
+  for (const message of conversation.messages) {
+    if (message.senderId && message.avatar && !message.revoke && !message.recall && ![10000, 10002].includes(message.messageType)) {
+      room.avatars ??= {}
+      room.avatars[message.senderId] = message.avatar
+    }
+  }
+  for (const original of room.messages) {
+    const avatar = original.senderId ? readAvatar?.(original.senderId) : undefined
+    if (original.senderId && avatar) {
+      room.avatars ??= {}
+      room.avatars[original.senderId] = avatar
+    }
   }
   const snapshot = { ids: conversation.messages.map(message => message.id), at: now }
   observeRoom(state, room, conversation.messages.map(message => ({

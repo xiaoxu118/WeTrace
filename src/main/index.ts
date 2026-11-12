@@ -1,3 +1,4 @@
+import { configureRecallMediaStore, retainedMediaResponse } from './recall-media-store'
 import { ScheduledMessages } from './scheduled-messages'
 import { NativeMessageTransport } from './message-transport'
 import { wechatVersion } from './key-capture'
@@ -28,6 +29,7 @@ import { listReportStyles, saveReportStyle, deleteReportStyle } from './report-s
 import type { SaveReportStyleInput } from '../shared/report-styles'
 import { ReportSnapshotStore } from './report-snapshots'
 import { generateReport } from './report-generator'
+import { copyReportImages } from './report-clipboard'
 import { VoiceModelManager } from './voice-model-manager'
 import type { FetchKeyResponse, KeyStatus, GenerateReportInput, ReportConversationQuery, ReportMessagesQuery, SaveModelConfigInput, ReportProgress } from '../shared/types'
 
@@ -94,11 +96,13 @@ function stopAccountWatch(webContentsId: number): void {
 app.whenReady().then(() => {
   if (!app.isPackaged && process.platform === 'darwin') app.dock?.setIcon(join(app.getAppPath(), 'build/icon.png'))
   configureConversationCachePolicy(join(app.getPath('userData'), 'cache-policy'))
+  configureRecallMediaStore(join(app.getPath('userData'), 'recall-media'))
   const previewDirectory = fs.mkdtempSync(join(app.getPath('temp'), 'wetrace-previews-'))
   configureImagePreviewDirectory(previewDirectory)
   app.once('will-quit', () => { try { fs.rmSync(previewDirectory, { recursive: true, force: true }) } catch { /* Already removed. */ } })
   protocol.handle('wetrace-media', async request => {
     const url = new URL(request.url)
+    if (url.hostname === 'retained') return retainedMediaResponse(request.url, request.headers.get('Range'))
     const id = url.pathname.slice(1)
     const image = url.hostname === 'preview' && /^[a-f0-9]{64}$/.test(id) ? await loadImagePreview(id).catch(() => undefined) : undefined
     return image ? new Response(new Uint8Array(image.data), { headers: { 'Content-Type': image.mime, 'Cache-Control': 'private, max-age=31536000, immutable' } }) : new Response('Image unavailable', { status: 404 })
@@ -395,6 +399,7 @@ app.whenReady().then(() => {
     if (!reportFiles.has(file) || !fs.existsSync(file)) throw new Error('报告文件不存在，请重新生成')
     shell.showItemInFolder(file)
   })
+  ipcMain.handle('report:copy-image', (_event, files: string[]) => copyReportImages(files, reportFiles))
   ipcMain.handle('report:open', async (_event, file: string) => {
     if (!reportFiles.has(file)) throw new Error('报告文件不存在，请重新生成')
     const error = await shell.openPath(file)

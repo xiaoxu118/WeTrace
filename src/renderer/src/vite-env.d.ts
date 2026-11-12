@@ -41,6 +41,7 @@ declare global {
       generateReport(input: GenerateReportInput): Promise<GenerateReportResponse>
       listReports(): Promise<import('../../shared/types').ReportHistoryItem[]>
       revealReport(file: string): Promise<void>
+      copyReportImages(files: string[]): Promise<void>
       openReport(file: string): Promise<void>
       onReportProgress(callback: (progress: ReportProgress) => void): () => void
       searchChatIndex(query: ChatIndexSearchQuery): Promise<ChatIndexSearchResponse>

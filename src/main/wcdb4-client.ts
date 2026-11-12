@@ -52,6 +52,7 @@ interface NativeBindings {
   execQuery?: (handle: number, kind: string, dbPath: string, sql: string, out: PointerOut) => number
   getGroupMembers?: (handle: number, username: string, out: PointerOut) => number
   getGroupNicknames?: (handle: number, username: string, out: PointerOut) => number
+  resolveVideoHardlink?: (handle: number, md5: string, dbPath: string, out: PointerOut) => number
   getEmoticonCdnUrl?: (handle: number, dbPath: string, md5: string, out: PointerOut) => number
   setMyWxid?: (handle: number, wxid: string) => number
   freeString: (pointer: unknown) => void
@@ -123,7 +124,10 @@ function loadBindings(): NativeBindings {
 
   let getEmoticonCdnUrl: NativeBindings['getEmoticonCdnUrl']
   try { getEmoticonCdnUrl = library.func('int32 wcdb_get_emoticon_cdn_url(int64 handle, const char* dbPath, const char* md5, _Out_ void** outUrl)') as NativeBindings['getEmoticonCdnUrl'] } catch {}
+  let resolveVideoHardlink: NativeBindings['resolveVideoHardlink']
+  try { resolveVideoHardlink = library.func('int32 wcdb_resolve_video_hardlink_md5(int64 handle, const char* md5, const char* dbPath, _Out_ void** outJson)') as NativeBindings['resolveVideoHardlink'] } catch { /* Optional in older bridges. */ }
   return {
+    resolveVideoHardlink,
     getEmoticonCdnUrl,
     library,
     openAccount: library.func(
@@ -522,6 +526,21 @@ export class Wcdb4Client {
         return this.normalizeMessages(rows, store.room, limit)
       },
     }
+  }
+
+  resolveVideoFilename(md5: string): string | undefined {
+    if (!/^[a-f\d]{32}$/i.test(md5)) return undefined
+    const read = bindings().resolveVideoHardlink
+    if (!read) return undefined
+    const databases = [path.join(this.accountRoot, 'db_storage/hardlink/hardlink.db'), path.join(this.accountRoot, 'db_storage/hardlink.db')]
+    for (const database of databases) {
+      if (!fs.existsSync(database)) continue
+      try {
+        const result = this.callJson<{ success?: boolean; resolved_md5?: unknown }>((handle, output) => read(handle, md5.toLowerCase(), database, output))
+        if (result.success && typeof result.resolved_md5 === 'string') return result.resolved_md5
+      } catch { /* Keep direct filename lookup available if the mapping is unavailable. */ }
+    }
+    return undefined
   }
 
   resolveEmoticonCdnUrl(md5: string): string | undefined {

@@ -7,6 +7,7 @@ export type RecordsCommand =
   | { type: 'index-search'; id: number; account: WechatAccount; key: string; keyword: string }
   | { type: 'index-conversation'; id: number; account: WechatAccount; key: string; conversationId: string; at?: number; limit?: number; refresh?: boolean }
   | { type: 'chat-index'; id: number; account: WechatAccount; key: string; action: ChatIndexAction; excludedConversationIds?: string[] }
+  | { type: 'apply-exclusions'; id: number; account: WechatAccount; key: string }
   | { type: 'conversation-options'; id: number; account: WechatAccount; key: string }
   | { type: 'group-monitor'; id: number; account: WechatAccount; key: string; query: import('./group-monitor').MonitorQuery }
   | { type: 'sync'; id: number; account: WechatAccount; key: string }

@@ -25,9 +25,10 @@ export interface SyncMessage {
   senderId?: string
   avatar?: string
   text: string
-  recall?: { original: string; originalAt: number; media?: Pick<SyncMessage, 'image' | 'voice' | 'sticker' | 'link' | 'forwarded' | 'quote'> }
+  recall?: { original: string; originalAt: number; media?: Pick<SyncMessage, 'image' | 'video' | 'voice' | 'sticker' | 'link' | 'forwarded' | 'quote'> }
   reportMedia?: { content: string; serverId?: string; imageFileHash?: string }
   voice?: { hex?: string; unavailable?: string }
+  video?: { source?: string; unavailable?: string }
   image?: { source?: string; unavailable?: string; thumbnail?: boolean }
   sticker?: { source?: string; unavailable?: string; label: string; md5?: string; cdnUrl?: string }
   link?: { url: string; title: string; description?: string }
@@ -153,7 +154,7 @@ export interface VoiceModelDownloadResult {
   error?: string
 }
 
-export interface ReportConversationQuery { root?: string; conversationId: string; selectedMessages?: ReportMessageSelection[] }
+export interface ReportConversationQuery { root?: string; conversationId: string; selectedMessages?: ReportMessageSelection[]; startDate?: string; endDate?: string }
 export interface ReportConversationSnapshot { snapshotId: string; conversationId: string; messages: SyncMessage[] }
 export type ReportConversationResponse = { ok: true; data: ReportConversationSnapshot } | { ok: false; error: string }
 

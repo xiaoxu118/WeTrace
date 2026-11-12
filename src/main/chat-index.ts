@@ -3,6 +3,7 @@ import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes, cr
 import { mkdirSync, chmodSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ChatIndexStatus } from '../shared/chat-index'
+import { chatIndexErrorMessage } from '../shared/chat-index.ts'
 import type { WcdbMessage } from './wcdb4-client'
 import type { ReportContentType, ConversationIndexSummary, SpeechStatsResult } from '../shared/types'
 
@@ -27,15 +28,17 @@ export class ChatIndex {
   private paused = false
   private queued?: { source: IndexSource; rebuild: boolean }
   private selfId: string
-  constructor(directory: string, account: string, secret: string, selfId: string) {
+  private exclusionVersions = new Map<string, number>()
+  constructor(directory: string, account: string, secret: string, selfId: string, options: { readOnly?: boolean } = {}) {
     this.selfId = selfId
-    mkdirSync(directory, { recursive: true, mode: 0o700 })
+    if (!options.readOnly) mkdirSync(directory, { recursive: true, mode: 0o700 })
     const identity = createHash('sha256').update(JSON.stringify([account, secret])).digest('hex')
     const file = join(directory, `${identity}.sqlite`)
     this.key = Buffer.from(hkdfSync('sha256', secret, identity, 'wetrace-chat-index-v1', 32))
-    this.db = new DatabaseSync(file)
-    chmodSync(file, 0o600)
+    this.db = new DatabaseSync(file, { readOnly: options.readOnly })
+    if (!options.readOnly) chmodSync(file, 0o600)
     try {
+    if (options.readOnly) { this.db.exec('PRAGMA busy_timeout=100'); return }
     this.db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA recursive_triggers=ON;
       CREATE TABLE IF NOT EXISTS stores (id TEXT PRIMARY KEY, room TEXT NOT NULL, mark TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS messages (source TEXT NOT NULL, id INTEGER NOT NULL, room TEXT NOT NULL, time INTEGER NOT NULL, sender TEXT NOT NULL, type INTEGER NOT NULL, payload BLOB NOT NULL, tokens TEXT NOT NULL, PRIMARY KEY(source,id));
@@ -72,6 +75,7 @@ export class ChatIndex {
       }
       this.db.prepare("DELETE FROM metadata WHERE key='source-fingerprint'").run()
       this.db.exec('COMMIT')
+      for (const room of rooms) this.exclusionVersions.set(room, (this.exclusionVersions.get(room) ?? 0) + 1)
     } catch (error) { this.db.exec('ROLLBACK'); throw error }
   }
   private save(status: ChatIndexStatus): void {
@@ -134,7 +138,7 @@ export class ChatIndex {
     return JSON.parse(Buffer.concat([cipher.update(bytes.subarray(28)), cipher.final()]).toString()) as WcdbMessage
   }
   private async build(source: IndexSource, rebuild: boolean): Promise<ChatIndexStatus> {
-    const status = { ...this.status(), state: 'building' as ChatIndexStatus['state'], completedStores: 0, totalStores: 0, errors: [] as string[], current: '' }
+    const status: ChatIndexStatus = { ...this.status(), state: 'building', completedStores: 0, totalStores: 0, errors: [], current: '', phase: 'discovering', currentMessages: 0, currentTotal: 0 }
     this.save(status)
     try {
       const sourceVersion = source.fingerprint?.()
@@ -150,12 +154,17 @@ export class ChatIndex {
       this.save(status)
       const insert = this.db.prepare('INSERT OR REPLACE INTO staging VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
       storeLoop: for (const store of stores) {
+        const exclusionVersion = this.exclusionVersions.get(store.room)
         if (source.excluded?.(store.room)) { this.exclude([store.room]); continue }
         if (this.paused) break
         status.current = store.room
+        status.phase = 'checking'
+        status.currentMessages = 0
+        status.currentTotal = 0
         this.save(status)
         try {
           const mark = source.watermark(store)
+          if (source.excluded?.(store.room)) { this.exclude([store.room]); continue }
           const saved = this.db.prepare('SELECT mark,room FROM stores WHERE id=?').get(store.id)
           const audit = this.db.prepare('SELECT value FROM metadata WHERE key=?').get(`audit:${store.id}`)
           const verifyHistory = rebuild || Boolean(saved && Date.now() - Number(audit?.value || 0) > 24 * 60 * 60 * 1000)
@@ -180,6 +189,10 @@ export class ChatIndex {
             this.db.prepare('DELETE FROM staging WHERE source=?').run(store.id)
             this.db.prepare('DELETE FROM metadata WHERE key=?').run(checkpointKey)
           }
+          status.phase = 'reading'
+          status.currentMessages = (append ? previous!.count : 0) + readCount
+          status.currentTotal = mark.count
+          this.save(status)
           while (after < mark.maxId && !this.paused) {
             const rows = source.page(store, after, mark.maxId, 1000)
             if (!rows.length) throw new Error('消息读取提前结束，保留已有索引')
@@ -193,17 +206,25 @@ export class ChatIndex {
               const position = Math.max(...rows.map(row => Number(row.id)))
               const nextCheckpoint: ImportCheckpoint = { room: store.room, target: mark, base: saved ? String(saved.mark) : null, append: Boolean(append), after: position, count: readCount + rows.length }
               this.db.prepare('INSERT OR REPLACE INTO metadata VALUES (?, ?)').run(checkpointKey, JSON.stringify(nextCheckpoint))
+              status.currentMessages = (append ? previous!.count : 0) + readCount + rows.length
+              this.save(status)
               this.db.exec('COMMIT')
             } catch (error) { this.db.exec('ROLLBACK'); throw error }
             const next = Math.max(...rows.map(row => Number(row.id)))
             if (next <= after) throw new Error('消息读取没有前进')
             after = next; readCount += rows.length
             await yieldWork()
+            // An exclude/unexclude pair may have deleted this batch while the
+            // worker yielded. Never publish its now-invalid in-memory count.
+            if (this.exclusionVersions.get(store.room) !== exclusionVersion) continue storeLoop
             if (source.excluded?.(store.room)) { this.exclude([store.room]); continue storeLoop }
           }
           if (this.paused) break
           if (readCount !== mark.count - (append ? previous!.count : 0)) throw new Error('消息数量变化，稍后重试')
           if (!same(mark, source.watermark(store, mark.maxId))) throw new Error('该会话正在变化，稍后继续更新')
+          if (source.excluded?.(store.room)) { this.exclude([store.room]); continue }
+          status.phase = 'publishing'
+          this.save(status)
           this.db.exec('BEGIN IMMEDIATE')
           try {
             if (!append) this.db.prepare('DELETE FROM messages WHERE source=?').run(store.id)
@@ -214,7 +235,10 @@ export class ChatIndex {
             this.db.prepare('DELETE FROM metadata WHERE key=?').run(checkpointKey)
             this.db.exec('COMMIT')
           } catch (error) { this.db.exec('ROLLBACK'); throw error }
-        } catch (error) { status.errors.push(`${store.room}: ${error instanceof Error ? error.message : String(error)}`) }
+        } catch (error) {
+          const message = chatIndexErrorMessage(error)
+          if (!status.errors.includes(message)) status.errors.push(message)
+        }
         status.completedStores++
         this.save(status)
         await yieldWork()
@@ -237,8 +261,11 @@ export class ChatIndex {
         status.state = status.errors.length ? 'error' : 'ready'
         if (!status.errors.length) status.updatedAt = new Date().toISOString()
       } else status.state = 'paused'
-    } catch (error) { status.state = 'error'; status.errors.push(error instanceof Error ? error.message : String(error)) }
+    } catch (error) { status.state = 'error'; status.errors.push(chatIndexErrorMessage(error)) }
     status.current = ''
+    status.phase = undefined
+    status.currentMessages = undefined
+    status.currentTotal = undefined
     this.save(status)
     return this.status()
   }
@@ -270,9 +297,10 @@ export class ChatIndex {
   reportSelection(room: string, start = 0, end = 253402300800000) {
     this.db.exec('BEGIN')
     try {
+      if (!this.hasConversation(room)) throw new Error('会话索引尚未完成')
       const rows = this.db.prepare(`SELECT date(time / 1000, 'unixepoch', 'localtime') AS day, sender, type, COUNT(*) AS count
         FROM messages INDEXED BY chat_report_metadata WHERE room=? AND time>=? AND time<? GROUP BY day,sender,type ORDER BY day,sender,type`).all(room,start,end)
-      const result = { revision: this.revision(room), rows: rows.map(row => ({ id: `${row.day}:${row.sender}:${row.type}`, time: new Date(`${row.day}T00:00:00`).getTime(), sender: String(row.sender), type: Number(row.type), count: Number(row.count) })) }
+      const result = { revision: this.revision(room), summary: this.summary(room), rows: rows.map(row => ({ id: `${row.day}:${row.sender}:${row.type}`, time: new Date(`${row.day}T00:00:00`).getTime(), sender: String(row.sender), type: Number(row.type), count: Number(row.count) })) }
       this.db.exec('COMMIT')
       return result
     } catch (error) { this.db.exec('ROLLBACK'); throw error }
@@ -280,6 +308,7 @@ export class ChatIndex {
   reportContent(room: string, start: number, end: number, types: ReportContentType[], expectedRevision?: string) {
     this.db.exec('BEGIN')
     try {
+      if (!this.hasConversation(room)) throw new Error('会话索引尚未完成')
       if (expectedRevision && expectedRevision !== this.revision(room)) throw new Error('会话索引已更新，请重新选择会话后生成报告')
       const counts: Record<ReportContentType, number> = { message: 0, voice: 0, image: 0, video: 0 }
       for (const row of this.db.prepare('SELECT type, COUNT(*) AS count FROM messages WHERE room=? AND time>=? AND time<? GROUP BY type').all(room,start,end)) {
