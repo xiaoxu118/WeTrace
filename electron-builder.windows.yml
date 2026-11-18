@@ -2,6 +2,10 @@ extends: ./electron-builder.yml
 extraResources:
   - from: resources/wcdb/windows/x64
     to: wcdb/windows/x64
+    filter:
+      - '*.dll'
+      - manifest.json
+      - README.md
   - from: resources/send-bridge
     to: send-bridge
     filter:
@@ -13,5 +17,7 @@ win:
         - x64
   artifactName: ${productName}-${version}-windows-${arch}.${ext}
 nsis:
+  include: build/installer.nsh
+  deleteAppDataOnUninstall: false
   oneClick: false
   allowToChangeInstallationDirectory: true

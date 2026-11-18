@@ -1,4 +1,5 @@
 import { registerRecallMediaAccount } from './recall-media-store'
+import { getCacheDirectory } from './cache-path'
 import type { ReportParticipant } from '../shared/report-facts'
 import type { ChatIndexSearchMatch, ChatIndexAction, ChatIndexStatus } from '../shared/chat-index'
 import { app, utilityProcess, type UtilityProcess } from 'electron'
@@ -43,7 +44,7 @@ function recordsProcess(lane: RecordsLane): UtilityProcess {
       pending.delete(id)
     }
   })
-  child.postMessage({ type: 'init', paths: { appPath: app.getAppPath(), resourcesPath: process.resourcesPath, statsPath: join(app.getPath('userData'), 'speech-index') } } satisfies RecordsCommand)
+  child.postMessage({ type: 'init', paths: { appPath: app.getAppPath(), resourcesPath: process.resourcesPath, statsPath: join(app.getPath('userData'), 'speech-index'), cachePath: getCacheDirectory() } } satisfies RecordsCommand)
   return child
 }
 
@@ -55,20 +56,22 @@ function request<T>(command: Exclude<RecordsCommand, { type: 'init' }> extends i
     const id = ++nextId
     // A native read may stop responding.
     // Expired report requests release their pending entry; late replies are ignored.
-    const timer = lane === 'reports' ? setTimeout(() => {
-      const error = new Error('读取报告记录超时，请重试')
+    const timedRecords = process.platform === 'win32' && (command.type === 'sync' || command.type === 'validate')
+    const timer = lane === 'reports' || timedRecords ? setTimeout(() => {
+      const error = new Error(lane === 'reports' ? '读取报告记录超时，请重试' : '读取微信记录超时，请重新同步')
       pending.delete(id)
       reject(error)
       // A stuck native call cannot be interrupted within the worker. Retire only
       // this lane so retries start fresh and unrelated work keeps running.
       if (processInstances.get(lane) === child) processInstances.delete(lane)
+      if (lane === 'records') validKeys.clear()
       for (const [otherId, task] of pending) {
         if (task.child !== child) continue
         pending.delete(otherId)
         task.reject(error)
       }
       child.kill()
-    }, 180_000) : undefined
+    }, lane === 'reports' ? 180_000 : 120_000) : undefined
     const cleanup = (): void => { if (timer) clearTimeout(timer) }
     pending.set(id, { child, resolve: result => { cleanup(); resolve(result as T) }, reject: error => { cleanup(); reject(error) } })
     try { child.postMessage({ ...command, id }) } catch (error) { cleanup(); pending.delete(id); reject(error) }

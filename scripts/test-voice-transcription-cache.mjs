@@ -18,7 +18,7 @@ try {
   assert.equal(conversions, 1, '重启后从磁盘复用，不重新识别')
   const files = await fs.readdir(directory)
   assert.equal(files.length, 1)
-  assert.equal((await fs.stat(path.join(directory, files[0]))).mode & 0o777, 0o600)
+  if (process.platform !== 'win32') assert.equal((await fs.stat(path.join(directory, files[0]))).mode & 0o777, 0o600)
   assert.equal(JSON.parse(await fs.readFile(path.join(directory, files[0]), 'utf8')).text, '本地识别文本')
   await restarted.getOrTranscribe('account/chat', '1234', 'model-v2', convert)
   await restarted.getOrTranscribe('account/chat', '123456', 'model-v1', convert)

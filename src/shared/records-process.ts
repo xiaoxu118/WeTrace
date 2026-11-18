@@ -3,7 +3,7 @@ import type { ChatIndexSearchMatch, ChatIndexAction, ChatIndexStatus } from './c
 import type { SyncConversation, SyncMessage, ConversationIndexQuery, ConversationIndexSummary, SpeechStatsQuery, SpeechStatsResult, ReportMessagesFilter, ReportMessagesResult, SyncResult, WechatAccount } from './types'
 
 export type RecordsCommand =
-  | { type: 'init'; paths: { appPath: string; resourcesPath: string; statsPath: string } }
+  | { type: 'init'; paths: { appPath: string; resourcesPath: string; statsPath: string; cachePath?: string } }
   | { type: 'index-search'; id: number; account: WechatAccount; key: string; keyword: string }
   | { type: 'index-conversation'; id: number; account: WechatAccount; key: string; conversationId: string; at?: number; limit?: number; refresh?: boolean }
   | { type: 'chat-index'; id: number; account: WechatAccount; key: string; action: ChatIndexAction; excludedConversationIds?: string[] }

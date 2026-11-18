@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "versions": [
+    "4.1.9.57"
+  ],
+  "files": {
+    "WCDB.dll": "e6c371b728b29ec4aeb2e5fe1297f08e5d01260b3566f14c17bda4a0ecba68e4",
+    "wx_key.dll": "9a2f2c6a09a3219afa4748a5e7e513d99c607173c3112c5afcc888996b98248c"
+  }
+}

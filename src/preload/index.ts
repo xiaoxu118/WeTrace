@@ -38,6 +38,8 @@ const api = {
   listWechatAccounts: (root?: string): Promise<WechatAccount[]> => ipcRenderer.invoke('wechat:accounts', root),
   getMediaCacheStats: (): Promise<import('../shared/media-cache').MediaCacheStats> => ipcRenderer.invoke('app:media-cache-stats'),
   getCacheSize: (): Promise<number> => ipcRenderer.invoke('app:cache-size'),
+  getCacheDirectory: (): Promise<string> => ipcRenderer.invoke('app:cache-directory'),
+  openCacheDirectory: (): Promise<void> => ipcRenderer.invoke('app:open-cache-directory'),
   getKeyStatus: (root?: string): Promise<KeyStatus> =>
     ipcRenderer.invoke('wechat:key-status', root),
   fetchKey: (root?: string): Promise<FetchKeyResponse> =>

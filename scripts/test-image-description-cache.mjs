@@ -18,7 +18,7 @@ try {
   assert.equal(conversions, 1, '重启后从磁盘复用，不重新理解')
   const files = await fs.readdir(directory)
   assert.equal(files.length, 1)
-  assert.equal((await fs.stat(path.join(directory, files[0]))).mode & 0o777, 0o600)
+  if (process.platform !== 'win32') assert.equal((await fs.stat(path.join(directory, files[0]))).mode & 0o777, 0o600)
   assert.equal(JSON.parse(await fs.readFile(path.join(directory, files[0]), 'utf8')).text, '本地理解文本')
   await restarted.getOrDescribe('account/chat', { data: Buffer.from('1234', 'hex'), mime: 'image/png' }, 'model-v2', convert)
   await restarted.getOrDescribe('account/chat', { data: Buffer.from('123456', 'hex'), mime: 'image/png' }, 'model-v1', convert)

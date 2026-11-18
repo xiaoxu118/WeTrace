@@ -30,6 +30,8 @@ declare global {
       listWechatAccounts(root?: string): Promise<WechatAccount[]>
       getMediaCacheStats(): Promise<import('../../shared/media-cache').MediaCacheStats>
       getCacheSize(): Promise<number>
+      getCacheDirectory(): Promise<string>
+      openCacheDirectory(): Promise<void>
       getKeyStatus(root?: string): Promise<KeyStatus>
       fetchKey(root?: string): Promise<FetchKeyResponse>
       onCaptureReady(callback: () => void): () => void

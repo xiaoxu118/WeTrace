@@ -10,9 +10,9 @@ try {
  assert.throws(()=>windowsNativeResources([root]),/缺少/)
  const directory=path.join(root,'wcdb','windows','x64');fs.mkdirSync(directory,{recursive:true})
  const files={}
- for(const name of ['wcdb_api.dll','WCDB.dll','key-helper.exe']){const data=Buffer.from('synthetic, never executable: '+name);fs.writeFileSync(path.join(directory,name),data);files[name]=createHash('sha256').update(data).digest('hex')}
+ for(const name of ['wcdb_api.dll','WCDB.dll','wx_key.dll','SDL2.dll']){const data=Buffer.from('synthetic, never executable: '+name);fs.writeFileSync(path.join(directory,name),data);files[name]=createHash('sha256').update(data).digest('hex')}
  fs.writeFileSync(path.join(directory,'manifest.json'),JSON.stringify({schema:1,versions:['4.1.13.999'],files}))
- assert.equal(windowsNativeResources([root]).api,path.join(directory,'wcdb_api.dll'))
+ assert.equal(windowsNativeResources([root]).dependency,path.join(directory,'WCDB.dll'))
  fs.writeFileSync(path.join(directory,'WCDB.dll'),'damaged');assert.throws(()=>windowsNativeResources([root]),/校验失败/)
  assert.equal(resolveWechatCompatibility('darwin','arm64','4.1.13')?.captureProfile,'wechat-4.1.13')
  assert.equal(resolveWechatCompatibility('darwin','x64','4.1.13.123')?.databaseSchema,'wechat4')

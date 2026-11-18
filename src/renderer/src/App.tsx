@@ -454,6 +454,7 @@ function LoginFlow({
 }) {
   const [elapsed, setElapsed] = useState(0)
   const account = detected?.account ?? null
+  const windows = status?.platform === 'win32'
   const hasKey = Boolean(detected?.hasKey)
   const sipDone = status?.sipEnabled === false
   const wechatRunning = status?.wechatRunning === true
@@ -489,14 +490,14 @@ function LoginFlow({
         </section>
 
         <section className="login-card" aria-label="连接本机微信">
-          <div className="lc-head"><b>连接本机微信</b><span>STEP {step + 1} / 4</span></div>
+          <div className="lc-head"><b>连接本机微信</b><span>STEP {windows ? Math.max(1, step) : step + 1} / {windows ? 3 : 4}</span></div>
 
           <div className="wsteps" aria-hidden="true">
-            {[0, 1, 2, 3].map((index) => (
+            {(windows ? [1, 2, 3] : [0, 1, 2, 3]).map((index, position) => (
               <Fragment key={index}>
-                {index > 0 && <i className="wsteps-line" />}
+                {position > 0 && <i className="wsteps-line" />}
                 <span className={`wsteps-dot${index < step ? ' done' : ''}${index === step ? ' on' : ''}`}>
-                  {index < step ? <Check size={11} strokeWidth={2.6} /> : index + 1}
+                  {index < step ? <Check size={11} strokeWidth={2.6} /> : position + 1}
                 </span>
               </Fragment>
             ))}
@@ -564,7 +565,7 @@ function LoginFlow({
                   <span className="v">
                     {!status
                       ? <span className="subtle">检测中…</span>
-                      : wechatLoggedIn
+                      : windows ? <span className="subtle">待确认</span> : wechatLoggedIn
                         ? <span className="badge-warn">已登录</span>
                         : <span className="badge-ok">未登录</span>}
                   </span>
@@ -572,7 +573,7 @@ function LoginFlow({
               </div>
               {!status ? null : wechatReady ? (
                 <div className="wnote ok">
-                  <b>已停在登录页面</b>
+                  <b>{windows ? '微信已运行' : '已停在登录页面'}</b>
                   <span>可以进入下一步，准备获取数据库密钥。</span>
                 </div>
               ) : (
@@ -586,7 +587,7 @@ function LoginFlow({
                 </div>
               )}
               <div className="wstep-actions">
-                <ActionButton type="button" className="btn" onClick={() => onStep(0)}>上一步</ActionButton>
+                {status?.platform !== 'win32' && <ActionButton type="button" className="btn" onClick={() => onStep(0)}>上一步</ActionButton>}
                 <ActionButton type="button" className="btn" disabled={refreshing} onClick={onRefresh}>
                   <RefreshCw size={13} className={refreshing ? 'spin' : undefined} />
                   {refreshing ? '检测中' : '重新检测'}
@@ -759,6 +760,7 @@ export default function App() {
   const [mediaCacheError, setMediaCacheError] = useState('')
   const [mediaCacheBusy, setMediaCacheBusy] = useState(false)
   const [cacheBytes, setCacheBytes] = useState<number | null>(null)
+  const [cacheDirectory, setCacheDirectory] = useState('')
   const [modelConfigName, setModelConfigName] = useState('')
   const [provider, setProvider] = useState('DeepSeek')
   const [modelKind, setModelKind] = useState<ModelKind>('text')
@@ -1000,6 +1002,7 @@ export default function App() {
     void window.wetrace?.getAppInfo().then((info) => { setAppVersion(info.version); setAppPlatform(info.platform) }).catch(() => undefined)
     void window.wetrace?.listWechatAccounts(rootDir ?? undefined).then(setAccounts).catch(() => undefined)
     void window.wetrace?.getCacheSize().then(setCacheBytes).catch(() => undefined)
+    void window.wetrace?.getCacheDirectory?.().then(setCacheDirectory).catch(() => notify('读取缓存目录失败'))
   }, [])
 
   useEffect(() => {
@@ -1586,6 +1589,7 @@ export default function App() {
     }
     await doSync()
   }
+
 
   function openSettings(panel: SettingsPanel) {
     setSettingsPanel(panel)
@@ -2353,9 +2357,9 @@ export default function App() {
                       <Field title="图片理解缓存" hint="已成功理解并保存到本机的图片"><span className="kv">{mediaCacheStats ? `${mediaCacheStats.image.count.toLocaleString()} 张 · ${formatBytes(mediaCacheStats.image.bytes)}` : mediaCacheError ? '读取失败' : '统计中…'}</span></Field>
                       <Field title="刷新统计" hint={mediaCacheError || '生成报告后可刷新查看新增缓存'}><ActionButton type="button" className="btn sm" disabled={mediaCacheBusy} onClick={() => void refreshCacheStats()}><RefreshCw size={13} className={mediaCacheBusy ? 'spin' : undefined} />{mediaCacheBusy ? '统计中…' : '刷新统计'}</ActionButton></Field>
                       <Field title="缓存占用" hint="WeTrace 本地缓存"><span className="kv">{cacheBytes === null ? '统计中…' : formatBytes(cacheBytes)}</span></Field>
-                      <Field title="缓存目录" hint="可迁移到其他磁盘">
-                        <span className="path">~/Library/Application Support/WeTrace/cache</span>
-                        <ActionButton type="button" className="btn sm" onClick={() => notify('缓存目录迁移将在真实数据接入后开放')}>更改</ActionButton>
+                      <Field title="缓存目录">
+                        <span className="path">{cacheDirectory || '读取中…'}</span>
+                        <ActionButton type="button" className="btn sm" onClick={() => void window.wetrace.openCacheDirectory().catch(() => notify('打开缓存目录失败'))}>打开</ActionButton>
                       </Field>
                       <Field title="清理" hint="保留关系档案与报告">
                         <ActionButton type="button" className="btn sm" onClick={() => notify('当前没有需要清理的图片缓存')}>清理图片缓存</ActionButton>

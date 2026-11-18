@@ -1,4 +1,5 @@
 import { windowsNativeResources } from './native-resources'
+import { captureWindowsKey } from './windows-key-capture'
 import { resolveWechatCompatibility } from '../shared/wechat-compatibility'
 import { app } from 'electron'
 import { execFile } from 'node:child_process'
@@ -79,10 +80,11 @@ export async function captureAccountKey(onReady?: () => void, accountRoot?: stri
       const version = await wechatVersion()
       if (!resources.versions.includes(version)) return { success: false, code: 'UNSUPPORTED_VERSION', error: `当前微信版本 ${version} 未在Windows适配清单中` }
       if (!accountRoot) throw new Error('缺少账号目录')
-      onReady?.()
-      const { stdout } = await run(resources.keyHelper, ['capture', '--account-root', accountRoot, '--json'], { timeout: 135000, maxBuffer: 2 << 20, windowsHide: true })
-      return parseOutput(stdout)
-    } catch { return { success: false, code: 'WINDOWS_CAPTURE_FAILED', error: 'Windows密钥工具不可用或执行失败，未保存密钥' } }
+      const { stdout } = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '(Get-Process -Name Weixin,WeChat -ErrorAction SilentlyContinue | Select-Object -First 1).Id'], { timeout: 10000, windowsHide: true })
+      const pid = Number(stdout.trim())
+      if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error('未找到微信进程，请先启动微信')
+      return { success: true, key: await captureWindowsKey(resources.keyDll, pid, onReady) }
+    } catch (error) { return { success: false, code: 'WINDOWS_CAPTURE_FAILED', error: error instanceof Error ? error.message : 'Windows密钥工具执行失败' } }
   }
   if (process.platform !== 'darwin') {
     return { success: false, code: 'UNSUPPORTED_PLATFORM', error: '自动获取密钥目前仅支持 macOS。' }

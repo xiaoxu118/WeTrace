@@ -8,6 +8,7 @@ export interface WechatCompatibility {
 }
 /** Entries describe implemented adapters, never an assertion that every feature passed real-device QA. */
 export const wechatCompatibility: readonly WechatCompatibility[] = [
+  { platform: 'win32', architectures: ['x64'], version: '4.1.9.57', captureProfile: 'wx-key-hook', databaseSchema: 'wechat4', validation: 'pending' },
   { platform: 'darwin', architectures: ['arm64'], version: '4.1.13', captureProfile: 'wechat-4.1.13', databaseSchema: 'wechat4', validation: 'native-only' },
   { platform: 'darwin', architectures: ['x64'], version: '4.1.13', captureProfile: 'wechat-4.1.13', databaseSchema: 'wechat4', validation: 'pending' },
 ]

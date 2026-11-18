@@ -1,4 +1,5 @@
 import { resolveWechatCompatibility } from '../shared/wechat-compatibility'
+import { getCacheDirectory } from './cache-path'
 import { windowsNativeResources } from './native-resources'
 import { defaultWechatRoot, wechatPlatformSupport } from './wechat-platform'
 import { app } from 'electron'
@@ -248,6 +249,6 @@ export async function resolveSticker(query: import('../shared/sticker').StickerQ
   if (!stored) throw new Error('请先连接微信账号')
   if (query.md5 !== undefined && (typeof query.md5 !== 'string' || !/^[a-f\d]{32}$/i.test(query.md5))) throw new Error('表情包标识无效')
   if (query.cdnUrl !== undefined && (typeof query.cdnUrl !== 'string' || query.cdnUrl.length > 8192)) throw new Error('表情包地址无效')
-  stickers ??= new StickerResolver(path.join(app.getPath('userData'), 'cache', 'stickers'))
+  stickers ??= new StickerResolver(path.join(getCacheDirectory(), 'stickers'))
   return stickers.resolve(account.root, query.md5, query.cdnUrl, async () => query.md5 ? await runStickerUrl(account, stored.key, query.md5) || undefined : undefined)
 }

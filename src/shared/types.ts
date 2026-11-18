@@ -91,6 +91,7 @@ export interface ReportMessagesResult extends ReportMessagesFilter {
 export type ReportMessagesResponse = { ok: true; data: ReportMessagesResult } | { ok: false; error: string }
 
 export interface KeyStatus {
+  platform?: string
   supported?: boolean
   error?: string
   sipEnabled: boolean

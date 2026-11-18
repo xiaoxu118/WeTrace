@@ -1,4 +1,5 @@
 import { windowsNativeResources } from './native-resources'
+import { createWindowsBindings } from './windows-wcdb'
 import { wechatPlatformSupport } from './wechat-platform'
 import { createHash } from 'node:crypto'
 import type { IndexSource, IndexStore, IndexWatermark } from './chat-index'
@@ -34,7 +35,7 @@ type HandleOut = [number]
 type PointerOut = [unknown | null]
 type NativeLibrary = ReturnType<typeof koffi.load>
 
-interface NativeBindings {
+export interface NativeBindings {
   library: NativeLibrary
   openAccount: (sessionDbPath: string, key: string, handle: HandleOut) => number
   getSessions: (handle: number, out: PointerOut) => number
@@ -66,7 +67,7 @@ let nativePaths = { appPath: process.cwd(), resourcesPath: process.resourcesPath
 export function configureWcdbPaths(paths: typeof nativePaths): void { nativePaths = paths }
 
 function nativeLibraryPath(): string {
-  if (process.platform === 'win32' && process.arch === 'x64') return windowsNativeResources([nativePaths.resourcesPath, path.join(nativePaths.appPath, 'resources')]).api
+  if (process.platform === 'win32' && process.arch === 'x64') return windowsNativeResources([nativePaths.resourcesPath, path.join(nativePaths.appPath, 'resources')]).dependency
   const support = wechatPlatformSupport()
   if (!support.supported) throw new Error(support.error)
   const arch = process.arch === 'arm64' ? 'arm64' : 'x64'
@@ -82,9 +83,10 @@ function nativeLibraryPath(): string {
 }
 
 function loadBindings(): NativeBindings {
+  if (process.platform === 'win32') return createWindowsBindings(windowsNativeResources([nativePaths.resourcesPath, path.join(nativePaths.appPath, 'resources')]).dependency)
   const apiPath = nativeLibraryPath()
   const libraryDirectory = path.dirname(apiPath)
-  koffi.load(path.join(libraryDirectory, process.platform === 'win32' ? 'WCDB.dll' : 'libWCDB.dylib'))
+  koffi.load(path.join(libraryDirectory, 'libWCDB.dylib'))
   const library = koffi.load(apiPath)
   const initProtection = library.func('int32 InitProtection(const char* resourcePath)') as (
     resourcePath: string
@@ -272,13 +274,15 @@ export class Wcdb4Client {
   private groupMembers = new Map<string, { at: number; ids: string[] }>()
   private groupNames = new Map<string, { at: number; names: Map<string, string> }>()
   private readonly sessionDbPath: string
+  private readonly nativeAccountRoot: string
 
   constructor(
     private readonly rawKey: string,
     private readonly accountRoot: string
   ) {
     if (!isValidDatabaseKey(rawKey)) throw new Error('数据库密钥格式无效')
-    this.sessionDbPath = path.join(accountRoot, 'db_storage', 'session', 'session.db')
+    this.nativeAccountRoot = accountRoot
+    this.sessionDbPath = path.join(this.nativeAccountRoot, 'db_storage', 'session', 'session.db')
     if (!fs.existsSync(this.sessionDbPath)) {
       throw new Error(`未找到微信会话数据库：${this.sessionDbPath}`)
     }
@@ -532,7 +536,7 @@ export class Wcdb4Client {
     if (!/^[a-f\d]{32}$/i.test(md5)) return undefined
     const read = bindings().resolveVideoHardlink
     if (!read) return undefined
-    const databases = [path.join(this.accountRoot, 'db_storage/hardlink/hardlink.db'), path.join(this.accountRoot, 'db_storage/hardlink.db')]
+    const databases = [path.join(this.nativeAccountRoot, 'db_storage/hardlink/hardlink.db'), path.join(this.nativeAccountRoot, 'db_storage/hardlink.db')]
     for (const database of databases) {
       if (!fs.existsSync(database)) continue
       try {
@@ -548,7 +552,7 @@ export class Wcdb4Client {
     const native = bindings(), read = native.getEmoticonCdnUrl
     if (!read) throw new Error('当前数据库组件不支持查询表情包下载地址')
     this.open()
-    const database = ['emoticon', 'emotion'].map(folder => path.join(this.accountRoot, 'db_storage', folder, 'emoticon.db')).find(file => fs.existsSync(file))
+    const database = ['emoticon', 'emotion'].map(folder => path.join(this.nativeAccountRoot, 'db_storage', folder, 'emoticon.db')).find(file => fs.existsSync(file))
     if (!database) return undefined
     const output: PointerOut = [null]
     try {

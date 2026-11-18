@@ -11,13 +11,14 @@ import type { RecordsCommand, RecordsEvent } from '../shared/records-process'
 import { chatIndexErrorMessage } from '../shared/chat-index'
 
 let statsPath = ''
+let cachePath = ''
 const chatDirectory = () => join(statsPath, '..', 'chat-index')
 const port = process.parentPort
 if (!port) throw new Error('聊天读取进程缺少通信端口')
 const send = (event: RecordsEvent): void => port.postMessage(event)
 onImagePreview((id, data, mime) => send({ type: 'preview', preview: { id, data, mime } }))
 port.on('message', ({ data }: { data: RecordsCommand }) => {
-  if (data.type === 'init') { configureWcdbPaths(data.paths); statsPath = data.paths.statsPath; configureRecallMediaStore(join(statsPath, '..', 'recall-media')); configureConversationCachePolicy(join(statsPath, '..', 'cache-policy')); return }
+  if (data.type === 'init') { configureWcdbPaths(data.paths); statsPath = data.paths.statsPath; cachePath = data.paths.cachePath || join(statsPath, '..', 'cache'); configureRecallMediaStore(join(statsPath, '..', 'recall-media')); configureConversationCachePolicy(join(statsPath, '..', 'cache-policy')); return }
   try {
     if (data.type === 'validate') {
       testDatabaseConnection(data.key, data.root)
@@ -51,7 +52,7 @@ port.on('message', ({ data }: { data: RecordsCommand }) => {
       if (conversationCacheAllowed(data.account.root, data.conversationId)) updateMonitorForSync(join(statsPath, '..', 'group-monitor'), data.account.root, data.key, state => capturePreparedMedia(state, data.conversationId, prepared, Date.now(), readImagePreview))
       send({ type: 'result', id: data.id, result: prepared })
     } else if (data.type === 'report') {
-      send({ type: 'result', id: data.id, result: queryWechatReportMessages(data.account, data.key, data.query, join(statsPath, '..', 'cache', 'report-index'), chatDirectory()) })
+      send({ type: 'result', id: data.id, result: queryWechatReportMessages(data.account, data.key, data.query, join(cachePath, 'report-index'), chatDirectory()) })
     } else {
       const preview = readImagePreview(data.imageId)
       send({ type: 'result', id: data.id, result: preview ? { id: data.imageId, ...preview } : null })

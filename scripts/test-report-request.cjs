@@ -24,7 +24,7 @@ const { pathToFileURL } = require('node:url')
   }
   const originalTimeout = global.setTimeout, originalClear = global.clearTimeout
   const timers = new Set()
-  global.setTimeout = (callback, ms) => { assert.equal(ms, 180_000); timers.add(callback); return callback }
+  global.setTimeout = (callback, ms) => { assert.ok(ms === 180_000 || process.platform === 'win32' && ms === 120_000); timers.add(callback); return callback }
   global.clearTimeout = timer => timers.delete(timer)
   try {
     await fs.writeFile(path.join(directory, 'policy.mjs'), stripTypeScriptTypes(await fs.readFile('src/main/conversation-cache-policy.ts', 'utf8')))
@@ -32,6 +32,8 @@ const { pathToFileURL } = require('node:url')
     policy.configureConversationCachePolicy(path.join(directory, 'policy'))
     let source = await fs.readFile('src/main/wechat-background.ts', 'utf8')
     source = source.replace(/import \{ app, utilityProcess, type UtilityProcess \} from 'electron'/, 'const { app, utilityProcess } = globalThis.reportRequestFixture')
+      .replace(/import \{ registerRecallMediaAccount \} from '[^']+'/, 'const registerRecallMediaAccount = () => {}')
+      .replace(/import \{ getCacheDirectory \} from '[^']+'/, "const getCacheDirectory = () => '/synthetic/cache'")
       .replace("'./conversation-cache-policy'", "'./policy.mjs'")
       .replace(/import \{ cacheImagePreview, readImagePreview \} from '[^']+'/, 'const cacheImagePreview = () => {}; const readImagePreview = () => undefined')
     await fs.writeFile(path.join(directory, 'background.mjs'), `const __dirname = '/synthetic';\n${stripTypeScriptTypes(source)}`)
@@ -95,6 +97,21 @@ const { pathToFileURL } = require('node:url')
     syncChild.emit('message', { id: syncChild.commands.at(-1).id, result: {} })
     await sync
     assert.equal(timers.size, 0)
+    if (process.platform === 'win32') {
+      const stuck = runWechatSync(account, 'fake')
+      const rejectedSync = assert.rejects(stuck, /读取微信记录超时/)
+      const stuckChild = children.filter(child => child.serviceName === 'WeTrace 聊天读取').at(-1)
+      const expireSync = [...timers][0]
+      timers.delete(expireSync); expireSync()
+      await rejectedSync
+      assert.equal(stuckChild.killed, true)
+      const retried = runWechatSync(account, 'fake')
+      const fresh = children.at(-1)
+      assert.notEqual(fresh, stuckChild)
+      fresh.emit('message', { id: fresh.commands.at(-1).id, result: 'sync-recovered' })
+      assert.equal(await retried, 'sync-recovered')
+      assert.equal(timers.size, 0)
+    }
     console.log('报告及排除请求测试通过：进程隔离、超时重启、迟到响应、失败重试、索引阻塞时保存排除、旧状态保护及取消排除。')
   } finally {
     global.setTimeout = originalTimeout; global.clearTimeout = originalClear

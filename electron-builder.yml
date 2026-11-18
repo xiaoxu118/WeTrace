@@ -4,6 +4,7 @@ directories:
   buildResources: build
 asarUnpack:
   - '**/node_modules/koffi/**/*'
+  - '**/node_modules/@koromix/koffi-*/**/*'
   - '**/node_modules/sherpa-onnx*/**/*'
   - '**/node_modules/silk-wasm/**/*'
 files:

@@ -1,4 +1,8 @@
+import { previousStorage } from './storage-bootstrap'
+import { migrateLegacyStorage } from './storage-migration'
+import { reportDirectory } from './storage-paths'
 import { configureRecallMediaStore, retainedMediaResponse } from './recall-media-store'
+import { getCacheDirectory } from './cache-path'
 import { ScheduledMessages } from './scheduled-messages'
 import { NativeMessageTransport } from './message-transport'
 import { wechatVersion } from './key-capture'
@@ -39,6 +43,8 @@ if (await relaunchWithoutLibraryOverrides()) app.exit(0)
 
 // A single scheduler owner prevents two app instances from dispatching the same saved task.
 if (!app.requestSingleInstanceLock()) app.exit(0)
+try { migrateLegacyStorage(process.env.WETRACE_STORAGE_ROOT!, previousStorage) }
+catch (error) { dialog.showErrorBox('旧数据导入失败', error instanceof Error ? error.message : '请检查安装目录权限'); app.exit(1) }
 app.on('second-instance', () => { const window = BrowserWindow.getAllWindows()[0]; if (window) { if (window.isMinimized()) window.restore(); window.show(); window.focus() } })
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'wetrace-media', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }])
@@ -133,8 +139,13 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('wechat:detect', (_event, root?: string) => detectWechat(root))
   ipcMain.handle('wechat:accounts', (_event, root?: string) => listWechatAccounts(root))
-  ipcMain.handle('app:media-cache-stats', () => getMediaCacheStats(join(app.getPath('userData'), 'cache')))
-  ipcMain.handle('app:cache-size', () => directorySize(join(app.getPath('userData'), 'cache')))
+  ipcMain.handle('app:media-cache-stats', () => getMediaCacheStats(getCacheDirectory()))
+  ipcMain.handle('app:cache-size', () => directorySize(getCacheDirectory()))
+  ipcMain.handle('app:cache-directory', () => getCacheDirectory())
+  ipcMain.handle('app:open-cache-directory', async () => {
+    const error = await shell.openPath(getCacheDirectory())
+    if (error) throw new Error(error)
+  })
   ipcMain.handle('wechat:watch', (event, accountRoot: string) => {
     stopAccountWatch(event.sender.id)
     const account = listWechatAccounts(accountRoot).find((item) => item.root === accountRoot)
@@ -162,12 +173,13 @@ app.whenReady().then(() => {
   ipcMain.handle('wechat:key-status', async (_event, root?: string): Promise<KeyStatus> => {
     const support = wechatPlatformSupport()
     if (!support.supported) return { supported: false, error: support.error, sipEnabled: false, hasKey: false, wechatRunning: false, wechatLoggedIn: false }
-    const [sip, process] = await Promise.all([sipEnabled(), wechatProcess()])
+    const [sip, wechatState] = await Promise.all([sipEnabled(), wechatProcess()])
     return {
+      platform: process.platform,
       sipEnabled: sip,
       hasKey: Boolean((await detectWechat(root)).hasKey),
-      wechatRunning: process.running,
-      wechatLoggedIn: process.loggedIn,
+      wechatRunning: wechatState.running,
+      wechatLoggedIn: wechatState.loggedIn,
     }
   })
 
@@ -260,12 +272,12 @@ app.whenReady().then(() => {
     try { return { ok: true, data: await queryAiEvidence(input, queryReportMessages) } }
     catch (error) { return { ok: false, error: error instanceof Error ? error.message : '读取原文失败' } }
   })
-  const longTermMemory = new AiLongTermMemoryStore(join(app.getPath('appData'), 'WeTrace', 'ai-long-term-memory'))
+  const longTermMemory = new AiLongTermMemoryStore(join(app.getPath('userData'), 'ai-long-term-memory'))
   ipcMain.handle('ai:memory', (_event, root: string, action: import('../shared/ai-long-term-memory').AiMemoryAction): import('../shared/ai-long-term-memory').AiMemoryResponse => {
     try { return { ok: true, memory: longTermMemory.update(root, action) } }
     catch (error) { return { ok: false, error: error instanceof Error ? error.message : '记忆操作失败' } }
   })
-  const aiChatHistory = new AiChatHistoryStore(join(app.getPath('appData'), 'WeTrace', 'ai-conversations'))
+  const aiChatHistory = new AiChatHistoryStore(join(app.getPath('userData'), 'ai-conversations'))
   let historyFlushedOnQuit = false
   app.on('before-quit', event => {
     if (historyFlushedOnQuit) return
@@ -322,7 +334,7 @@ app.whenReady().then(() => {
   })
 
   const voiceModelManager = new VoiceModelManager(join(app.getPath('userData'), 'models', 'sensevoice-small-int8'))
-  const listVoiceCache = new VoiceTranscriptionCache(join(app.getPath('userData'), 'cache', 'voice-transcriptions'))
+  const listVoiceCache = new VoiceTranscriptionCache(join(getCacheDirectory(), 'voice-transcriptions'))
   let listTranscriber: ReturnType<typeof createOfflineTranscriber> | undefined
   let voiceQueue: Promise<unknown> = Promise.resolve()
   ipcMain.handle('wechat:voice-transcribe', async (_event, query: import('../shared/types').VoiceMessageQuery): Promise<import('../shared/types').VoiceMessageResponse> => {
@@ -391,7 +403,7 @@ app.whenReady().then(() => {
     } finally { reportJobs.delete(event.sender.id) }
   })
   ipcMain.handle('report:list', async () => {
-    const reports = await listReportHistory(join(app.getPath('documents'), 'WeTrace Reports'))
+    const reports = await listReportHistory(reportDirectory())
     for (const report of reports) for (const file of [report.htmlPath, ...report.pngPaths]) reportFiles.add(file)
     return reports
   })

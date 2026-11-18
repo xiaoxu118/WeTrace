@@ -92,6 +92,8 @@ app.whenReady().then(async () => {
     const topicsPath = path.join(moduleDirectory, 'topics.mjs')
     await fs.writeFile(topicsPath, stripTypeScriptTypes(await fs.readFile('src/shared/report-topics.ts', 'utf8')))
     let source = await fs.readFile('src/main/report-generator.ts', 'utf8')
+    source = source.replace("import { getCacheDirectory } from './cache-path'", "const getCacheDirectory = () => path.join(app.getPath('userData'), 'cache')")
+    source = source.replace("import { reportDirectory } from './storage-paths'", "const reportDirectory = () => path.join(app.getPath('documents'), 'WeTrace Reports')")
     await fs.writeFile(path.join(moduleDirectory, 'concurrency.mjs'), stripTypeScriptTypes(await fs.readFile('src/shared/report-concurrency.ts', 'utf8')))
     source = source.replace("'../shared/report-concurrency'", "'./concurrency.mjs'")
     source = source.replace("'../shared/report-topics'", "'./topics.mjs'")
@@ -327,7 +329,7 @@ app.whenReady().then(async () => {
     voiceOnly = false
     console.log('报告流程自测通过：报告失败后复用语音缓存、缓存命中不加载离线模型、风格持久化与增删改、模板与内容分离、素材分流、长记录分段、HTML/PNG 输出、语音原文进入总结及报告和失败处理。')
   } finally {
-    await fs.rm(temporary, { recursive: true, force: true })
+    await fs.rm(temporary, { recursive: true, force: true }).catch(error => { if (process.platform !== 'win32' || error.code !== 'EBUSY') throw error })
     await fs.rm(moduleDirectory, { recursive: true, force: true })
   }
 }).then(() => app.exit(0)).catch(error => { console.error(error); app.exit(1) })
