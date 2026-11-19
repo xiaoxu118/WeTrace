@@ -76,6 +76,7 @@ export interface ReportMessagesFilter {
   contentTypes: ReportContentType[]
   includeVoiceData?: boolean
   deferMedia?: boolean
+  patternMetadata?: boolean
   metadataOnly?: boolean
   indexRevision?: string
 }
@@ -85,6 +86,7 @@ export interface ReportMessagesQuery extends ReportMessagesFilter {
 }
 
 export interface ReportMessagesResult extends ReportMessagesFilter {
+  patternMembers?: [string, string][]
   selectionOnly?: boolean
   messages: SyncMessage[]
   counts: Record<ReportContentType, number>

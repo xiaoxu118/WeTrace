@@ -12,13 +12,14 @@ import { chatIndexErrorMessage } from '../shared/chat-index'
 
 let statsPath = ''
 let cachePath = ''
-const chatDirectory = () => join(statsPath, '..', 'chat-index')
+let indexPath = ''
+const chatDirectory = () => indexPath || join(statsPath, '..', 'chat-index')
 const port = process.parentPort
 if (!port) throw new Error('聊天读取进程缺少通信端口')
 const send = (event: RecordsEvent): void => port.postMessage(event)
 onImagePreview((id, data, mime) => send({ type: 'preview', preview: { id, data, mime } }))
 port.on('message', ({ data }: { data: RecordsCommand }) => {
-  if (data.type === 'init') { configureWcdbPaths(data.paths); statsPath = data.paths.statsPath; cachePath = data.paths.cachePath || join(statsPath, '..', 'cache'); configureRecallMediaStore(join(statsPath, '..', 'recall-media')); configureConversationCachePolicy(join(statsPath, '..', 'cache-policy')); return }
+  if (data.type === 'init') { configureWcdbPaths(data.paths); statsPath = data.paths.statsPath; indexPath = data.paths.indexPath || ''; cachePath = data.paths.cachePath || join(statsPath, '..', 'cache'); configureRecallMediaStore(join(statsPath, '..', 'recall-media')); configureConversationCachePolicy(join(statsPath, '..', 'cache-policy')); return }
   try {
     if (data.type === 'validate') {
       testDatabaseConnection(data.key, data.root)

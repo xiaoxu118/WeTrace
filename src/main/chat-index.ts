@@ -8,7 +8,7 @@ import type { WcdbMessage } from './wcdb4-client'
 import type { ReportContentType, ConversationIndexSummary, SpeechStatsResult } from '../shared/types'
 
 export interface IndexWatermark { count: number; maxId: number; types: number; times: number; lengths: number }
-export interface IndexStore { id: string; room: string; tableName: string; dbPath: string }
+export interface IndexStore { lastActive?: number; id: string; room: string; tableName: string; dbPath: string }
 interface ImportCheckpoint { room: string; target: IndexWatermark; base: string | null; append: boolean; after: number; count: number }
 export interface IndexSource {
   excluded?(room: string): boolean
@@ -142,7 +142,7 @@ export class ChatIndex {
     this.save(status)
     try {
       const sourceVersion = source.fingerprint?.()
-      const stores = source.stores().filter(store => !source.excluded?.(store.room))
+      const stores = source.stores().filter(store => !source.excluded?.(store.room)).sort((a, b) => (b.lastActive ?? 0) - (a.lastActive ?? 0))
       this.db.exec('BEGIN IMMEDIATE')
       try {
         this.db.exec('DELETE FROM planned')
@@ -281,6 +281,12 @@ export class ChatIndex {
   revision(room: string): string {
     const stores = this.db.prepare('SELECT id,mark FROM stores WHERE room=? ORDER BY id').all(room)
     return createHash('sha256').update(JSON.stringify(stores)).digest('hex')
+  }
+  patternMetadata(room: string, start: number, end: number) {
+    return this.db.prepare(`SELECT strftime('%Y-%m-%dT%H:00:00', time / 1000, 'unixepoch', 'localtime') AS hour, sender, COUNT(*) AS count FROM messages WHERE room=? AND time>=? AND time<? AND type NOT IN (10000,10002) GROUP BY hour,sender ORDER BY hour`).all(room, start, end).map(row => ({ id: `${row.hour}:${row.sender}`, time: new Date(String(row.hour)).getTime(), sender: String(row.sender), type: 1, count: Number(row.count) }))
+  }
+  patternMemberIds(room: string): string[] {
+    return this.db.prepare('SELECT DISTINCT sender FROM messages WHERE room=? AND sender!=?').all(room, '').map(row => String(row.sender))
   }
   reportMetadata(room: string, start = 0, end = 253402300800000): { id: string; time: number; sender: string; type: number }[] {
     return this.db.prepare('SELECT id,time,sender,type FROM messages INDEXED BY chat_report_metadata WHERE room=? AND time>=? AND time<? ORDER BY time,id').all(room,start,end)

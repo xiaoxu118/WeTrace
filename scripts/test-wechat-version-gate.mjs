@@ -18,16 +18,20 @@ globalThis.versionFixture={
  wechatVersion:async()=>{if(!version)throw new Error('fixture missing version');return version},
  loadDatabaseKey:()=>{reads++;return{key:'a'.repeat(64),legacy:false,createdAt:null}},
  validateWechatDatabase:async()=>{validations++},
+ runWechatReportQuery:async(_account,_key,query)=>({ ...query, patternMembers: query.patternMetadata ? [['id:fictional','虚构成员']] : undefined, messages: [], counts: {} }),
 }
 let source=stripTypeScriptTypes(fs.readFileSync('src/main/wechat.ts','utf8'))
 source=source.replace(/import\s*\{([^}]+)\}\s*from\s*'([^']+)'/g,(match,names,specifier)=>specifier.startsWith('node:')?match:`const {${names}} = globalThis.versionFixture`)
 try{
- const {detectWechat,syncWechat}=await import(url(source))
+ const {detectWechat,syncWechat,queryReportMessages}=await import(url(source))
  let result=await detectWechat(account)
  assert.equal(result.hasKey,false);assert.match(result.error,/尚未适配/);assert.equal(reads,0)
  await assert.rejects(syncWechat({root:account}),/尚未适配/);assert.equal(reads,0)
  version='4.1.13';result=await detectWechat(account)
  assert.equal(result.hasKey,true);assert.equal(validations,1)
+ const patterns=await queryReportMessages({root:account,conversationId:'fictional@chatroom',startDate:'2026-11-19',endDate:'2026-11-19',contentTypes:['message'],metadataOnly:true,patternMetadata:true})
+ assert.equal(patterns.patternMetadata,true,'聊天脉络标志必须穿过真实 wechat 查询转发层')
+ assert.deepEqual(patterns.patternMembers,[['id:fictional','虚构成员']],'转发后必须返回观察对象成员')
  version='';result=await detectWechat(account);assert.equal(result.hasKey,false);assert.match(result.error,/无法确定/)
  console.log('版本连接门禁通过：未知版本和版本读取失败不误报连接成功、不读取密钥；已适配版本仍走数据库校验')
 }finally{delete globalThis.versionFixture;fs.rmSync(directory,{recursive:true,force:true})}

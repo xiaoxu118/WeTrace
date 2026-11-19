@@ -21,6 +21,23 @@ try {
   const hash = '1234567890abcdef1234567890abcdef'
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jD1sAAAAASUVORK5CYII=', 'base64')
   fs.writeFileSync(path.join(directory, `${hash}_t_m.dat`), png.map(byte => byte ^ 0x65))
+  const legacyDirectory = path.join(root, 'FileStorage/Image/2026-10')
+  fs.mkdirSync(legacyDirectory, { recursive: true })
+  const legacyHash = 'abcdef1234567890abcdef1234567890'
+  const legacyImages = localImages(root, 'test@chatroom')
+  assert.deepEqual(legacyImages.get(legacyHash), [])
+  fs.writeFileSync(path.join(legacyDirectory, `${legacyHash}.dat`), png)
+  assert.ok(presentMessage(3, `<img md5="${legacyHash}" />`, legacyImages).image.source)
+  const alternateHash = 'fedcba0987654321fedcba0987654321'
+  const alternateDirectory = path.join(root, 'msg/attach/alternate-conversation/2026-10/Img')
+  fs.mkdirSync(alternateDirectory, { recursive: true })
+  fs.writeFileSync(path.join(alternateDirectory, `${alternateHash}.dat`), png)
+  assert.ok(presentMessage(3, `<img md5="${alternateHash}" />`, localImages(root, 'test@chatroom')).image.source)
+  const prefixHash = 'aabb00112233445566778899aabbccdd'
+  const prefixDirectory = path.join(root, 'msg/attach/aa/bb')
+  fs.mkdirSync(prefixDirectory, { recursive: true })
+  fs.writeFileSync(path.join(prefixDirectory, `${prefixHash}.dat`), png)
+  assert.ok(presentMessage(3, `<img md5="${prefixHash}" />`, localImages(root, 'test@chatroom')).image.source)
   const images = localImages(root, 'test@chatroom')
   const image = presentMessage(3, `<msg><img md5="${hash}" /></msg>`, images)
   assert.equal(image.image.thumbnail, true)

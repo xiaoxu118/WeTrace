@@ -3055,9 +3055,14 @@ select.inp {
 }
 .patterns-chart { position: relative; padding-top: 32px; margin: 16px 0; }
 .patterns-day-tooltip { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; padding: 6px 10px; border-radius: 6px; background: #262e3d; color: #fff; font-size: 12px; pointer-events: none; z-index: 1; }
-.patterns-timeline { display: flex; gap: 2px; align-items: end; height: 88px; overflow-x: auto; }
+.patterns-timeline { display: flex; justify-content: center; gap: 3px; align-items: end; height: 112px; overflow-x: auto; border-bottom: 1px solid var(--border); padding: 0 12px; }
 .patterns-timeline .patterns-day.ant-btn { flex: 1 0 4px; max-width: 24px; min-width: 4px; height: 100%; display: flex; align-items: flex-end; border: 0; background: transparent; padding: 0; box-shadow: none; }
-.patterns-timeline .patterns-bar { display: block; width: 100%; background: #8cafea; border-radius: 2px; pointer-events: none; }
+.patterns-timeline .patterns-bar { display: block; width: 100%; background: #8cafea; border-radius: 4px 4px 0 0; pointer-events: none; }
+.patterns-bar-stack { width: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; }
+.patterns-chart-short .patterns-timeline { gap: clamp(12px, 5vw, 48px); padding-bottom: 28px; }
+.patterns-chart-short .patterns-timeline .patterns-day.ant-btn { flex: 1 1 40px; max-width: 40px; position: relative; overflow: visible; }
+.patterns-count { color: var(--muted-2); font-size: 12px; margin-bottom: 6px; line-height: 18px; }
+.patterns-date { position: absolute; bottom: -25px; left: 50%; transform: translateX(-50%); color: var(--muted-2); font-size: 12px; white-space: nowrap; }
 .patterns-timeline button:hover .patterns-bar, .patterns-timeline button:focus-visible .patterns-bar { background: #39496b; }
 .pattern-card { border: 1px solid var(--border, #e4e4e5); padding: 16px; border-radius: 12px; margin: 12px 0; }
 .pattern-card small, .patterns-evidence small { color: #777; }
@@ -3212,3 +3217,26 @@ select.inp {
 .message-file-actions { display: flex; align-items: center; gap: 12px; overflow-wrap: anywhere; }
 .message-file-actions .btn { flex-shrink: 0; }
 .message-file .message-image-preview { margin-bottom: 8px; }
+
+.analysis-filter-member { position: relative; }
+.analysis-filter-member > .analysis-member-popup { inset: calc(100% + 4px) 0 auto 0 !important; width: auto; }
+
+/* Keep pattern summaries compact, with labels and values on separate lines. */
+.patterns-body .analysis-filter-member .ant-select { font-size: 13px; }
+.analysis-member-popup .ant-select-item-option-content { font-size: 13px; white-space: normal; overflow-wrap: anywhere; }
+.patterns-body .analysis-totals { gap: 10px; margin: 16px 0; }
+.patterns-body .analysis-totals .ant-statistic { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 12px 14px; border-radius: 10px; }
+.patterns-body .analysis-totals .ant-statistic-title { display: block; margin: 0; font-size: 12px; line-height: 1.5; color: var(--muted-2); }
+.patterns-body .analysis-totals .ant-statistic-content { display: block; font-size: 16px; line-height: 1.6; font-weight: 500; white-space: normal; overflow-wrap: anywhere; }
+.patterns-body .analysis-totals .ant-statistic:first-child .ant-statistic-content { font-size: 13px; }
+.patterns-body .analysis-totals .ant-statistic-content-suffix { font-size: 11px; margin-inline-start: 4px; }
+
+.analysis-filter-range { position: relative; }
+.analysis-filter-range > .analysis-date-popup { inset: calc(100% + 4px) 0 auto auto !important; }
+
+.analysis-date-fields { display: flex; align-items: center; gap: 8px; position: relative; min-width: 0; }
+.analysis-date-fields .ant-picker { flex: 1; min-width: 0; }
+.analysis-date-separator { font-size: 12px; color: var(--muted-2); }
+.analysis-date-fields > .analysis-date-popup { inset: calc(100% + 4px) 0 auto auto !important; }
+
+.patterns-body .pattern-card p { white-space: pre-line; }

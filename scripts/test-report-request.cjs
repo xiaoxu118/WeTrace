@@ -24,7 +24,7 @@ const { pathToFileURL } = require('node:url')
   }
   const originalTimeout = global.setTimeout, originalClear = global.clearTimeout
   const timers = new Set()
-  global.setTimeout = (callback, ms) => { assert.ok(ms === 180_000 || process.platform === 'win32' && ms === 120_000); timers.add(callback); return callback }
+  global.setTimeout = (callback, ms) => { assert.ok(ms === 30_000 || ms === 180_000 || ms === 120_000); timers.add(callback); return callback }
   global.clearTimeout = timer => timers.delete(timer)
   try {
     await fs.writeFile(path.join(directory, 'policy.mjs'), stripTypeScriptTypes(await fs.readFile('src/main/conversation-cache-policy.ts', 'utf8')))
@@ -32,12 +32,12 @@ const { pathToFileURL } = require('node:url')
     policy.configureConversationCachePolicy(path.join(directory, 'policy'))
     let source = await fs.readFile('src/main/wechat-background.ts', 'utf8')
     source = source.replace(/import \{ app, utilityProcess, type UtilityProcess \} from 'electron'/, 'const { app, utilityProcess } = globalThis.reportRequestFixture')
-      .replace(/import \{ registerRecallMediaAccount \} from '[^']+'/, 'const registerRecallMediaAccount = () => {}')
-      .replace(/import \{ getCacheDirectory \} from '[^']+'/, "const getCacheDirectory = () => '/synthetic/cache'")
+      .replace(/import \{ registerRecallMediaAccount, retainMedia \} from '[^']+'/, 'const registerRecallMediaAccount = () => {}; const retainMedia = () => undefined')
+      .replace(/import \{ getCacheDirectory, getChatIndexDirectory \} from '[^']+'/, "const getCacheDirectory = () => '/synthetic/cache'; const getChatIndexDirectory = () => '/synthetic/chat-index'")
       .replace("'./conversation-cache-policy'", "'./policy.mjs'")
       .replace(/import \{ cacheImagePreview, readImagePreview \} from '[^']+'/, 'const cacheImagePreview = () => {}; const readImagePreview = () => undefined')
     await fs.writeFile(path.join(directory, 'background.mjs'), `const __dirname = '/synthetic';\n${stripTypeScriptTypes(source)}`)
-    const { runWechatReportQuery, runWechatSync, runWechatChatIndex } = await import(pathToFileURL(path.join(directory, 'background.mjs')).href)
+    const { runWechatSpeechQuery, runOriginalImage, runWechatReportQuery, runWechatSync, runWechatChatIndex } = await import(pathToFileURL(path.join(directory, 'background.mjs')).href)
     const account = { root: '/synthetic', wxid: 'synthetic' }
     const first = runWechatReportQuery(account, 'fake', { conversationId: 'first' })
     const second = runWechatReportQuery(account, 'fake', { conversationId: 'second' })
@@ -96,8 +96,9 @@ const { pathToFileURL } = require('node:url')
     maintenance.emit('message', { id: maintenance.commands.at(-1).id })
     syncChild.emit('message', { id: syncChild.commands.at(-1).id, result: {} })
     await sync
+    assert.ok(children.some(child => child.commands.some(command => command.type === 'chat-index' && command.action === 'sync')), '同步返回后后台增量更新索引')
     assert.equal(timers.size, 0)
-    if (process.platform === 'win32') {
+    {
       const stuck = runWechatSync(account, 'fake')
       const rejectedSync = assert.rejects(stuck, /读取微信记录超时/)
       const stuckChild = children.filter(child => child.serviceName === 'WeTrace 聊天读取').at(-1)
@@ -112,6 +113,27 @@ const { pathToFileURL } = require('node:url')
       assert.equal(await retried, 'sync-recovered')
       assert.equal(timers.size, 0)
     }
+    const statistics = runWechatSpeechQuery(account, 'fake', { conversationId: 'room@chatroom' })
+    const statisticsChild = children.at(-1)
+    const statisticsRejected = assert.rejects(statistics, /超时/)
+    const statisticsTimer = [...timers][0]
+    timers.delete(statisticsTimer); statisticsTimer()
+    await statisticsRejected
+    assert.equal(statisticsChild.killed, true)
+    const image = runOriginalImage(account, 'fake', { conversationId: 'room', messageId: 'image', createdAt: 1 })
+    const imageChild = children.at(-1)
+    assert.equal(imageChild.serviceName, 'WeTrace 原图读取')
+    const imageRejected = assert.rejects(image, /读取原图超时/)
+    const imageTimer = [...timers][0]
+    timers.delete(imageTimer); imageTimer()
+    await imageRejected
+    assert.equal(imageChild.killed, true)
+    const imageRetry = runOriginalImage(account, 'fake', { conversationId: 'room', messageId: 'image', createdAt: 1 })
+    const freshImage = children.at(-1)
+    assert.notEqual(freshImage, imageChild)
+    freshImage.emit('message', { id: freshImage.commands.at(-1).id, result: { source: 'synthetic', thumbnail: false } })
+    assert.equal((await imageRetry).thumbnail, false)
+    assert.equal(timers.size, 0)
     console.log('报告及排除请求测试通过：进程隔离、超时重启、迟到响应、失败重试、索引阻塞时保存排除、旧状态保护及取消排除。')
   } finally {
     global.setTimeout = originalTimeout; global.clearTimeout = originalClear

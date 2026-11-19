@@ -30,7 +30,7 @@ try {
   fs.writeFileSync(path.join(old.userData, 'cache-directory.json'), JSON.stringify({ directory: externalCache }))
   fs.mkdirSync(path.join(old.documents, 'WeTrace Reports'), { recursive: true })
   fs.writeFileSync(path.join(old.documents, 'WeTrace Reports/fictional.html'), 'synthetic-report')
-  migrateLegacyStorage(layout.root, old)
+  await migrateLegacyStorage(layout.root, old)
   assert.equal(fs.readFileSync(path.join(layout.data, 'database-keys/fictional.bin'), 'utf8'), 'synthetic-encrypted-key')
   assert.equal(fs.readFileSync(path.join(layout.cache, 'fictional.json'), 'utf8'), '{"synthetic":true}')
   assert.equal(fs.readFileSync(path.join(layout.session, 'Local Storage/fictional'), 'utf8'), 'synthetic-settings')
@@ -39,7 +39,11 @@ try {
   assert.equal(fs.existsSync(path.join(layout.reports, 'fictional.html')), true)
   assert.equal(fs.existsSync(path.join(old.userData, 'database-keys/fictional.bin')), true)
   fs.writeFileSync(path.join(layout.data, 'database-keys/fictional.bin'), 'updated')
-  migrateLegacyStorage(layout.root, old)
+  await migrateLegacyStorage(layout.root, old)
+  assert.equal(fs.readFileSync(path.join(layout.data, 'database-keys/fictional.bin'), 'utf8'), 'updated')
+  fs.writeFileSync(path.join(old.userData, 'database-keys/recovered.bin'), 'synthetic-recovered')
+  await migrateLegacyStorage(layout.root, old)
+  assert.equal(fs.readFileSync(path.join(layout.data, 'database-keys/recovered.bin'), 'utf8'), 'synthetic-recovered')
   assert.equal(fs.readFileSync(path.join(layout.data, 'database-keys/fictional.bin'), 'utf8'), 'updated')
   const overridden = new Map(), switches = new Map()
   globalThis.storageFixture = {
@@ -57,7 +61,9 @@ try {
   assert.ok(switches.get('log-file').startsWith(layout.logs))
   globalThis.storageFixture.app.isPackaged = true
   globalThis.storageFixture.app.getAppPath = () => path.join(installation, 'resources', 'app.asar')
-  process.execPath = path.join(installation, 'WeTrace.exe')
+  process.execPath = process.platform === 'darwin'
+    ? path.join(installation, 'WeTrace.app', 'Contents', 'MacOS', 'WeTrace')
+    : path.join(installation, 'WeTrace.exe')
   await import('data:text/javascript;base64,' + Buffer.from(stripTypeScriptTypes(source) + '\n// packaged fixture').toString('base64'))
   assert.equal(process.env.WETRACE_STORAGE_ROOT, layout.root, '安装包按exe位置定位，不能使用启动时的工作目录')
   console.log('安装目录存储测试通过：全部运行路径、环境变量、浏览器缓存、旧数据导入、缓存归位和原文件保留')

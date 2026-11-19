@@ -1,5 +1,5 @@
 import { registerRecallMediaAccount, retainMedia } from './recall-media-store'
-import { getCacheDirectory } from './cache-path'
+import { getCacheDirectory, getChatIndexDirectory } from './cache-path'
 import type { ReportParticipant } from '../shared/report-facts'
 import type { ChatIndexSearchMatch, ChatIndexAction, ChatIndexStatus } from '../shared/chat-index'
 import { app, utilityProcess, type UtilityProcess } from 'electron'
@@ -10,7 +10,7 @@ import { excludedConversations, saveExcludedConversations } from './conversation
 import type { RecordsCommand, RecordsEvent, PreviewData } from '../shared/records-process'
 import type { SyncConversation, ConversationIndexQuery, ConversationIndexSummary, SpeechStatsQuery, SpeechStatsResult, SyncMessage, ReportMessagesFilter, ReportMessagesResult, SyncResult, WechatAccount } from '../shared/types'
 
-type RecordsLane = 'records' | 'statistics' | 'indexing' | 'reports'
+type RecordsLane = 'records' | 'statistics' | 'indexing' | 'reports' | 'media'
 const processInstances = new Map<RecordsLane, UtilityProcess>()
 let nextId = 0
 const pending = new Map<number, { child: UtilityProcess; resolve: (result: unknown) => void; reject: (error: Error) => void }>()
@@ -23,7 +23,7 @@ const identity = (root: string, key: string): string => createHash('sha256').upd
 function recordsProcess(lane: RecordsLane): UtilityProcess {
   const existing = processInstances.get(lane)
   if (existing) return existing
-  const child = utilityProcess.fork(join(__dirname, 'wechat-records-process.js'), [], { serviceName: lane === 'indexing' ? 'WeTrace 聊天索引' : lane === 'reports' ? 'WeTrace 报告读取' : lane === 'statistics' ? 'WeTrace 发言统计' : 'WeTrace 聊天读取' })
+  const child = utilityProcess.fork(join(__dirname, 'wechat-records-process.js'), [], { serviceName: lane === 'media' ? 'WeTrace 原图读取' : lane === 'indexing' ? 'WeTrace 聊天索引' : lane === 'reports' ? 'WeTrace 报告读取' : lane === 'statistics' ? 'WeTrace 发言统计' : 'WeTrace 聊天读取' })
   processInstances.set(lane, child)
   child.on('message', (event: RecordsEvent) => {
     if (event.type === 'preview') { cacheImagePreview(Buffer.from(event.preview.data), event.preview.mime); return }
@@ -44,21 +44,21 @@ function recordsProcess(lane: RecordsLane): UtilityProcess {
       pending.delete(id)
     }
   })
-  child.postMessage({ type: 'init', paths: { appPath: app.getAppPath(), resourcesPath: process.resourcesPath, statsPath: join(app.getPath('userData'), 'speech-index'), cachePath: getCacheDirectory() } } satisfies RecordsCommand)
+  child.postMessage({ type: 'init', paths: { appPath: app.getAppPath(), resourcesPath: process.resourcesPath, statsPath: join(app.getPath('userData'), 'speech-index'), cachePath: getCacheDirectory(), indexPath: getChatIndexDirectory() } } satisfies RecordsCommand)
   return child
 }
 
 function request<T>(command: Exclude<RecordsCommand, { type: 'init' }> extends infer Command ? Command extends { id: number } ? Omit<Command, 'id'> : never : never, laneOverride?: RecordsLane): Promise<T> {
   if ('account' in command && 'key' in command) registerRecallMediaAccount(command.account.root, command.key)
   return new Promise((resolve, reject) => {
-    const lane: RecordsLane = laneOverride ?? (command.type === 'apply-exclusions' || command.type === 'chat-index' ? 'indexing' : command.type === 'report' || command.type === 'report-media' || command.type === 'report-participants' ? 'reports' : command.type === 'index-search' || command.type === 'index-conversation' || command.type === 'speech' || command.type === 'conversation-summary' ? 'statistics' : 'records')
+    const lane: RecordsLane = laneOverride ?? (command.type === 'original-image' ? 'media' : command.type === 'apply-exclusions' || command.type === 'chat-index' ? 'indexing' : command.type === 'report' || command.type === 'report-media' || command.type === 'report-participants' ? 'reports' : command.type === 'index-search' || command.type === 'index-conversation' || command.type === 'speech' || command.type === 'conversation-summary' ? 'statistics' : 'records')
     const child = recordsProcess(lane)
     const id = ++nextId
     // A native read may stop responding.
     // Expired report requests release their pending entry; late replies are ignored.
-    const timedRecords = process.platform === 'win32' && (command.type === 'sync' || command.type === 'validate')
-    const timer = lane === 'reports' || timedRecords ? setTimeout(() => {
-      const error = new Error(lane === 'reports' ? '读取报告记录超时，请重试' : '读取微信记录超时，请重新同步')
+    const timedRecords = lane === 'records' || lane === 'statistics'
+    const timer = lane === 'reports' || lane === 'media' || timedRecords ? setTimeout(() => {
+      const error = new Error(lane === 'media' ? '读取原图超时，请关闭预览后重试' : lane === 'reports' ? '读取报告记录超时，请重试' : '读取微信记录超时，请重新同步')
       pending.delete(id)
       reject(error)
       // A stuck native call cannot be interrupted within the worker. Retire only
@@ -71,7 +71,7 @@ function request<T>(command: Exclude<RecordsCommand, { type: 'init' }> extends i
         task.reject(error)
       }
       child.kill()
-    }, lane === 'reports' ? 180_000 : 120_000) : undefined
+    }, lane === 'media' ? 30_000 : lane === 'reports' ? 180_000 : 120_000) : undefined
     const cleanup = (): void => { if (timer) clearTimeout(timer) }
     pending.set(id, { child, resolve: result => { cleanup(); resolve(result as T) }, reject: error => { cleanup(); reject(error) } })
     try { child.postMessage({ ...command, id }) } catch (error) { cleanup(); pending.delete(id); reject(error) }
@@ -82,7 +82,11 @@ export function runWechatSync(account: WechatAccount, key: string): Promise<Sync
   const id = identity(account.root, key)
   const existing = syncing.get(id)
   if (existing) return existing
-  const promise = request<SyncResult>({ type: 'sync', account, key }).finally(() => syncing.delete(id))
+  const promise = request<SyncResult>({ type: 'sync', account, key }).then(result => {
+    // Refresh missing and newly arrived records without blocking the home screen.
+    void runWechatChatIndex(account, key, 'sync').catch(() => undefined)
+    return result
+  }).finally(() => syncing.delete(id))
   syncing.set(id, promise)
   return promise
 }

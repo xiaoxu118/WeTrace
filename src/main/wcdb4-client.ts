@@ -505,7 +505,9 @@ export class Wcdb4Client {
       stores: () => {
         const rooms = new Map<string, string>()
         const remember = (username: string) => { if (username) rooms.set(createHash('md5').update(username).digest('hex'), username) }
-        for (const session of this.getSessions()) remember(session.username)
+        const sessions = this.getSessions()
+        const activity = new Map(sessions.map(session => [session.username, session.lastActive]))
+        for (const session of sessions) remember(session.username)
         const directory = path.join(path.dirname(this.sessionDbPath), '..', 'message')
         const stores: IndexStore[] = []
         for (const file of fs.readdirSync(directory).filter(name => /^(?:biz_)?message(?:_\d+)?\.db$/i.test(name)).sort()) {
@@ -524,7 +526,10 @@ export class Wcdb4Client {
         }
         if (!stores.length) throw new Error('没有找到可索引的聊天消息表')
         // A later shard may contain the Name2Id entry of an earlier table.
-        return stores.map(store => ({ ...store, room: store.room.startsWith('unmapped:') ? rooms.get(store.tableName.slice(4).toLowerCase()) || store.room : store.room }))
+        return stores.map(store => {
+          const room = store.room.startsWith('unmapped:') ? rooms.get(store.tableName.slice(4).toLowerCase()) || store.room : store.room
+          return { ...store, room, lastActive: activity.get(room) ?? 0 }
+        })
       },
       watermark: (store, through) => {
         const columns = schema(store)
@@ -644,7 +649,7 @@ export class Wcdb4Client {
           isSend,
           sender,
           serverId: text(row, ['server_id', 'serverId', 'msg_svr_id', 'msgSvrId', 'mesSvrID']),
-          imageFileHash: metadataOnly ? undefined : packedImageHash(value(row, ['packed_info_data', 'packedInfoData', 'packed_info', 'BytesExtra', 'WCDB_CT_packed_info'])),
+          imageFileHash: metadataOnly ? undefined : packedImageHash(value(row, ['packed_info_data', 'packedInfoData', 'packed_info', 'BytesExtra', 'WCDB_CT_packed_info_data', 'WCDB_CT_packed_info'])),
         }
       })
       .sort((left, right) => left.createTime - right.createTime)

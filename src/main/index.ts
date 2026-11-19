@@ -2,7 +2,7 @@ import { previousStorage } from './storage-bootstrap'
 import { migrateLegacyStorage } from './storage-migration'
 import { reportDirectory } from './storage-paths'
 import { configureRecallMediaStore, retainedMediaResponse, readRetainedMedia } from './recall-media-store'
-import { getCacheDirectory } from './cache-path'
+import { getCacheDirectory, saveCacheDirectory, initializeCacheDirectory } from './cache-path'
 import { watchWechatMedia } from './wechat-media-watch'
 import { ScheduledMessages } from './scheduled-messages'
 import { NativeMessageTransport } from './message-transport'
@@ -44,8 +44,9 @@ if (await relaunchWithoutLibraryOverrides()) app.exit(0)
 
 // A single scheduler owner prevents two app instances from dispatching the same saved task.
 if (!app.requestSingleInstanceLock()) app.exit(0)
-try { migrateLegacyStorage(process.env.WETRACE_STORAGE_ROOT!, previousStorage) }
+try { await migrateLegacyStorage(process.env.WETRACE_STORAGE_ROOT!, previousStorage) }
 catch (error) { dialog.showErrorBox('旧数据导入失败', error instanceof Error ? error.message : '请检查安装目录权限'); app.exit(1) }
+try { initializeCacheDirectory() } catch (error) { dialog.showErrorBox('缓存目录不可用', error instanceof Error ? error.message : '请检查目录权限'); app.exit(1); throw error }
 app.on('second-instance', () => { const window = BrowserWindow.getAllWindows()[0]; if (window) { if (window.isMinimized()) window.restore(); window.show(); window.focus() } })
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'wetrace-media', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }])
@@ -155,6 +156,12 @@ app.whenReady().then(() => {
   ipcMain.handle('wechat:accounts', (_event, root?: string) => listWechatAccounts(root))
   ipcMain.handle('app:media-cache-stats', () => getMediaCacheStats(getCacheDirectory()))
   ipcMain.handle('app:cache-size', () => directorySize(getCacheDirectory()))
+  ipcMain.handle('app:change-cache-directory', async () => {
+    const selected = await dialog.showOpenDialog({ title: '选择缓存与索引目录', properties: ['openDirectory', 'createDirectory'] })
+    if (selected.canceled || !selected.filePaths[0]) return null
+    saveCacheDirectory(selected.filePaths[0])
+    return selected.filePaths[0]
+  })
   ipcMain.handle('app:cache-directory', () => getCacheDirectory())
   ipcMain.handle('app:open-cache-directory', async () => {
     const error = await shell.openPath(getCacheDirectory())

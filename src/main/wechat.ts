@@ -162,6 +162,7 @@ export async function queryReportMessages(query: ReportMessagesQuery): Promise<R
     includeVoiceData: query.includeVoiceData,
     deferMedia: query.deferMedia,
     metadataOnly: query.metadataOnly,
+    patternMetadata: query.patternMetadata,
     indexRevision: query.indexRevision,
     selectedMessages: query.selectedMessages,
   })

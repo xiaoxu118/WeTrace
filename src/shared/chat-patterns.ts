@@ -47,7 +47,17 @@ export function analyzePatterns(messages: SyncMessage[], start: string, end: str
   }
   const hours = Array.from({ length: 24 }, () => 0)
   for (const m of records) if (localDay(m.createdAt) >= start && localDay(m.createdAt) <= end) hours[new Date(m.createdAt).getHours()] += m.count ?? 1
-  const total = days.reduce((n, d) => n + d.count, 0), peak = hours.indexOf(Math.max(...hours))
-  if (days.filter(d => d.count).length >= 14) findings.push({ id: 'routine', date: '', kind: 'routine', title: '日常的聊天节律', detail: `这段时间最活跃的是 ${peak}:00–${peak}:59，共 ${hours[peak]} 条，占消息总量的 ${(hours[peak] / total * 100).toFixed(1)}%。` })
+  const total = days.reduce((n, d) => n + d.count, 0)
+  const periods = [
+    { label: '上午', start: 6, end: 12 },
+    { label: '下午', start: 12, end: 18 },
+    { label: '晚上', start: 18, end: 24 },
+    { label: '凌晨', start: 0, end: 6 },
+  ].map(period => ({ ...period, count: hours.slice(period.start, period.end).reduce((sum, count) => sum + count, 0) }))
+  const activeDays = days.filter(d => d.count).length
+  if (activeDays >= 14) {
+    const periodText = periods.filter(period => period.count > 0).map(period => `${period.label} ${String(period.start).padStart(2, '0')}:00–${String(period.end).padStart(2, '0')}:00：${period.count} 条（${(period.count / total * 100).toFixed(1)}%）`).join('；')
+    findings.push({ id: 'routine', date: '', kind: 'routine', title: '日常的聊天节律', detail: `${start} 至 ${end}，共 ${total} 条消息、${activeDays} 个活跃日。\n${periodText}。` })
+  }
   return { days, total, findings: findings.reverse().slice(0, 40) }
 }

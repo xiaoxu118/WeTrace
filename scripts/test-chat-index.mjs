@@ -7,7 +7,7 @@ const directory = mkdtempSync(join(tmpdir(), 'wetrace-all-index-'))
 let index
 try {
   let version = 'v1', pages = []
-  const stores = [{ id: 'store-a', room: 'room-a', tableName: 'Msg_a', dbPath: '/test/a' }, { id: 'store-b', room: 'room-b', tableName: 'Msg_b', dbPath: '/test/b' }]
+  const stores = [{ id: 'store-a', room: 'room-a', lastActive: 1, tableName: 'Msg_a', dbPath: '/test/a' }, { id: 'store-b', room: 'room-b', lastActive: 10, tableName: 'Msg_b', dbPath: '/test/b' }]
   const row = (id, sender = 'alice', isSend = false) => ({ id: String(id), createTime: 1700000000 + id, type: 1, content: 'PRIVATE_MESSAGE_CONTENT', isSend, sender })
   const messages = new Map([['store-a', [row(1), row(2, 'me', true)]], ['store-b', [row(1, 'bob')]]])
   const source = {
@@ -29,6 +29,12 @@ try {
     assert.throws(() => reader.reportContent('room-b', 0, 253402300800000, ['message']), /索引尚未完成/)
   } finally { reader?.close(); index.db.exec('ROLLBACK') }
   assert.equal((await building).state, 'ready')
+  assert.equal(pages[0].store, 'store-b', '最近活跃会话优先更新')
+  assert.equal(index.isFresh('source-changed-after-build'), false)
+  assert.equal(index.hasConversation('room-a'), true, '源数据变化不应使已完成的会话快照不可读')
+  assert.deepEqual(index.patternMemberIds('room-a').sort(), ['alice', 'me'])
+  assert.equal(index.patternMetadata('room-a', 0, 253402300800000).reduce((sum, row) => sum + row.count, 0), 2)
+  assert.deepEqual(index.patternMetadata('room-a', 0, 1), [])
   index.db.exec('BEGIN IMMEDIATE')
   try {
     const readOnly = new ChatIndex(directory, 'account', 'secret', 'me', { readOnly: true })

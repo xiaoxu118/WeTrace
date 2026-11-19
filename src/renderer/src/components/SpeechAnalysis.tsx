@@ -37,7 +37,7 @@ export function SpeechAnalysis({ conversation, root }: { conversation: SyncConve
     } catch { setCopyState('复制失败，请重试') }
   }
   return <div className="speech-body">
-    <AnalysisFilters start={start} end={end} onRangeChange={(from, to) => { setStart(from); setEnd(to) }} allowAll presets={[{ label: '全部时间', days: null }, { label: '今天', days: 1 }, { label: '近 7 天', days: 7 }, { label: '近 30 天', days: 30 }]} />
+    <AnalysisFilters start={start} end={end} onRangeChange={(from, to) => { setStart(from); setEnd(to) }} allowAll presets={[{ label: '全部时间', days: null }, { label: '今天', days: 1 }, { label: '昨天', days: 1, endOffset: 1 }, { label: '近 7 天', days: 7 }]} />
     <div aria-live="polite">{invalid ? <Alert type="error" title="开始日期不能晚于结束日期" /> : loading ? <div className="analysis-loading"><Spin /></div> : error ? <Alert type="error" title={error} action={<Button size="small" onClick={() => setRetry(value => value + 1)}>重试</Button>} /> : <>
       <div className="analysis-totals"><Statistic title="发言总数" value={stats.total} suffix="条" /><Statistic title="发言人数" value={stats.members.length} suffix="人" /><Statistic title="未发言人数" value={stats.silentMembers?.length ?? '—'} suffix="人" /></div>
       <div className="speech-toolbar"><Segmented<'active' | 'silent'> className="speech-tabs" aria-label="统计名单" value={tab} onChange={setTab} options={[{ label: '发言排行', value: 'active' }, { label: '未发言成员', value: 'silent' }]} /><Button icon={<Copy size={14} />} onClick={() => void copyStats()}>复制统计</Button></div>

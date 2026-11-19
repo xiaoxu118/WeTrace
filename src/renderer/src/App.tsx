@@ -7,7 +7,7 @@ import type { MonitorRoom, MonitorState } from '../../shared/group-monitor'
 import { ChatText } from './components/ChatText'
 import { GroupMonitor } from './components/GroupMonitor'
 import { ActionButton } from './components/ui/ActionButton'
-import { Alert, Image, Input } from 'antd'
+import { Alert, Image, Input, Select } from 'antd'
 import { DEFAULT_IMAGE_CONCURRENCY, MAX_IMAGE_CONCURRENCY, imageConcurrency } from '../../shared/report-concurrency'
 import { ReportHistory } from './components/ReportHistory'
 import { ReportMessagePicker } from './components/ReportMessagePicker'
@@ -56,7 +56,7 @@ import { defaultReportStyles, type ReportWritingStyle } from '../../shared/repor
 import { defaultReportTemplates } from '../../shared/report-templates'
 
 type View = 'send' | 'ai' | 'messages' | 'summary' | 'settings' | 'monitor'
-type SettingsPanel = 'db' | 'image' | 'model' | 'asr' | 'cache' | 'about'
+type SettingsPanel = 'db' | 'model' | 'asr' | 'cache' | 'about'
 type SummaryPanel = 'home' | 'generate' | 'templates' | 'example'
 type ReportDatePreset = 'today' | 'yesterday' | 'week' | 'custom'
 type ReportFormat = 'mobile' | 'desktop'
@@ -91,7 +91,6 @@ function daysAgo(days: number): string {
 
 const settingsNav: { id: SettingsPanel; label: string; icon: LucideIcon }[] = [
   { id: 'db', label: '数据库与账号', icon: Database },
-  { id: 'image', label: '图片解密', icon: ImageIcon },
   { id: 'model', label: '模型配置', icon: Cpu },
   { id: 'asr', label: '语音转文字', icon: Mic },
   { id: 'cache', label: '缓存与索引', icon: HardDrive },
@@ -198,9 +197,9 @@ function sameMessage(left: SyncMessage, right: SyncMessage): boolean {
 
 const ChatMessages = memo(function ChatMessages({ conversation, accountName, accountAvatar, monitorRoom, root }: { conversation: SyncConversation; accountName: string; accountAvatar?: string; monitorRoom?: MonitorRoom; root?: string }) {
   return <><div className="daydiv"><span>{conversation.day}</span></div>{retainedRecallMessages(conversation.messages, monitorRoom).map((message) => {
-    if ([10000, 10002].includes(message.messageType >>> 0) && !message.recall) {
+    if (([10000, 10002].includes(message.messageType >>> 0) || /^(?:[“\"][^\n]+?[”\"]|[^\n]{1,80})\s*拍了拍\s*[“\"]/.test(message.text)) && !message.recall) {
       return <div className="mrow message-system" key={`${conversation.id}:${message.id}`} data-message-id={message.id}>
-        <div className="message-system-text"><MessageContent message={message} root={root} conversationId={conversation.id} /></div>
+        <div className="message-system-text"><MessageContent message={{ ...message, text: message.text.replace(/&#(?:x([0-9a-f]+)|(\d+));/gi, (entity, hex: string, decimal: string) => { const code = Number.parseInt(hex || decimal, hex ? 16 : 10); return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : entity }) }} root={root} conversationId={conversation.id} /></div>
       </div>
     }
     const senderName = message.sender || (message.from === 'me' ? accountName : conversation.name)
@@ -718,7 +717,7 @@ function LoginFlow({
               <div className="wstep-actions">
                 <ActionButton type="button" className="btn" disabled={syncing} onClick={() => onStep(2)}>上一步</ActionButton>
                 <ActionButton type="button" className="btn primary" disabled={syncing || !hasKey} onClick={onSync}>
-                  {syncing ? '正在同步…' : '开始同步并进入'}
+                  进入首页
                 </ActionButton>
               </div>
             </div>
@@ -1775,7 +1774,7 @@ export default function App() {
           onRefresh={() => void refreshStatus()}
           onOpenSipGuide={() => setSipGuide(true)}
           onStartListening={() => void startKeyCapture()}
-          onSync={() => void doSync()}
+          onSync={() => { setEntered(true); void doSync(undefined, true) }}
         />
         <SipGuide
           open={sipGuide}
@@ -2197,8 +2196,6 @@ export default function App() {
                 {settingsPanel === 'db' && (
                   <div className="panel active">
                     <h2>数据库与账号</h2>
-                    <ChatIndexPanel state={chatIndexState} />
-                    <p className="desc">连接本机微信数据。WeTrace 始终以只读方式访问，不会修改或回写微信数据库。</p>
                     <div className="group">
                       <Field title="数据目录" hint="微信 4.x 的 xwechat_files">
                         <span className="path" title={displayDirectory}>{displayDirectory}</span>
@@ -2215,9 +2212,7 @@ export default function App() {
                         )}
                       </Field>
                       <Field title="切换账号" hint="选择本机已发现的微信账号">
-                        <select className="inp provider" value={account?.root ?? ''} disabled={syncing || accounts.length === 0} onChange={(event) => void switchAccount(event.target.value)}>
-                          {accounts.map((item) => <option key={item.root} value={item.root}>{item.wxid}</option>)}
-                        </select>
+                        <Select className="provider" aria-label="切换账号" value={account?.root} disabled={syncing || accounts.length === 0} onChange={value => void switchAccount(value)} options={accounts.map(item => ({ value: item.root, label: item.wxid }))} />
                         <ActionButton type="button" className="btn sm" onClick={disconnectAccount}>退出 WeTrace</ActionButton>
                       </Field>
                       <Field title="数据库密钥" hint="用于解密本地 SQLCipher">
@@ -2243,22 +2238,6 @@ export default function App() {
                         <ActionButton type="button" className="btn sm primary" disabled={syncing} onClick={() => void runSync()}><RefreshCw size={13} />立即同步</ActionButton>
                       </Field>
                       {autoSyncError && <div className="settings-sync-error">自动刷新失败：{autoSyncError}</div>}
-                    </div>
-                  </div>
-                )}
-
-                {settingsPanel === 'image' && (
-                  <div className="panel active">
-                    <h2>图片解密</h2>
-                    <p className="desc">自动在本机解密聊天图片，支持旧版 XOR 与新版 V1/V2。优先显示原图，微信专用图片格式会尝试使用缩略图。</p>
-                    <div className="group">
-                      <Field title="图片解密" hint="读取消息时自动处理"><span className="kv">已启用 · 仅本机</span></Field>
-                      <Field title="图片密钥" hint="与数据库密钥相互独立"><span className="kv">从微信本地缓存自动识别<small>无需填写或重新获取数据库密钥</small></span></Field>
-                      <Field title="当前会话记录" hint="最近读取的聊天图片">
-                        <span className="kv">已解密 {imageStats.available} / {imageStats.total} 张</span>
-                        <ActionButton type="button" className="btn sm" disabled={syncing} onClick={() => void doSync(rootDir ?? undefined)}>重新读取</ActionButton>
-                      </Field>
-                      <Field title="存储方式" hint="不改写微信原文件"><span className="kv">仅保留在当前应用内存<small>尚未下载的图片，请先在微信中打开后重新读取</small></span></Field>
                     </div>
                   </div>
                 )}
@@ -2372,22 +2351,19 @@ export default function App() {
                   <div className="panel active">
                     <h2>缓存与索引</h2>
                     <ChatIndexPanel state={chatIndexState} />
-                    <p className="desc">语音转写、图片理解和报告会话记录保存在本机，重试或重新打开应用后可复用。下方统计全部会话已成功保存的结果；不同模型或版本可能分别缓存，不代表聊天中的全部素材数量。</p>
                     <div className="group">
+                      <Field title="当前聊天图片缓存">
+                        <span className="kv">已解密 {imageStats.available} / {imageStats.total} 张</span>
+                        <ActionButton type="button" className="btn sm" disabled={syncing} onClick={() => void doSync(rootDir ?? undefined)}>重新读取</ActionButton>
+                      </Field>
                       <Field title="语音转写缓存" hint="已成功转写并保存到本机的语音"><span className="kv">{mediaCacheStats ? `${mediaCacheStats.voice.count.toLocaleString()} 条 · ${formatBytes(mediaCacheStats.voice.bytes)}` : mediaCacheError ? '读取失败' : '统计中…'}</span></Field>
                       <Field title="图片理解缓存" hint="已成功理解并保存到本机的图片"><span className="kv">{mediaCacheStats ? `${mediaCacheStats.image.count.toLocaleString()} 张 · ${formatBytes(mediaCacheStats.image.bytes)}` : mediaCacheError ? '读取失败' : '统计中…'}</span></Field>
                       <Field title="刷新统计" hint={mediaCacheError || '生成报告后可刷新查看新增缓存'}><ActionButton type="button" className="btn sm" disabled={mediaCacheBusy} onClick={() => void refreshCacheStats()}><RefreshCw size={13} className={mediaCacheBusy ? 'spin' : undefined} />{mediaCacheBusy ? '统计中…' : '刷新统计'}</ActionButton></Field>
                       <Field title="缓存占用" hint="WeTrace 本地缓存"><span className="kv">{cacheBytes === null ? '统计中…' : formatBytes(cacheBytes)}</span></Field>
                       <Field title="缓存目录">
+                        <ActionButton type="button" className="btn sm" onClick={() => void window.wetrace.changeCacheDirectory().then(directory => { if (directory) notify('缓存目录已设置，重启应用后生效') }).catch(error => notify(error instanceof Error ? error.message : '更改缓存目录失败'))}>更改</ActionButton>
                         <span className="path">{cacheDirectory || '读取中…'}</span>
                         <ActionButton type="button" className="btn sm" onClick={() => void window.wetrace.openCacheDirectory().catch(() => notify('打开缓存目录失败'))}>打开</ActionButton>
-                      </Field>
-                      <Field title="清理" hint="保留关系档案与报告">
-                        <ActionButton type="button" className="btn sm" onClick={() => notify('当前没有需要清理的图片缓存')}>清理图片缓存</ActionButton>
-                        <ActionButton type="button" className="btn sm" onClick={() => notify('请使用上方“更新索引”增量更新聊天记录')}>索引管理</ActionButton>
-                      </Field>
-                      <Field title="清空全部本地数据" hint="不可恢复">
-                        <ActionButton type="button" className="btn sm danger" onClick={() => notify('真实数据接入后，这里会提供二次确认流程')}><Trash2 size={13} />清空数据</ActionButton>
                       </Field>
                     </div>
                   </div>

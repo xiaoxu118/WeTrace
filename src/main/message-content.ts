@@ -85,32 +85,55 @@ export function localImages(root: string, username?: string, resolvePath?: (hash
   const cache = new Map<string, string[]>()
   const attachment = path.join(root, 'msg/attach')
   let directories: string[] | undefined
+  let fallbackDirectories: string[] | undefined
   const lookup = (): string[] => {
     if (directories) return directories
     directories = []
     const roots = username ? [path.join(attachment, createHash('md5').update(username).digest('hex'))] : [attachment]
-    function visit(directory: string, depth: number): void {
+    function visit(directory: string, depth: number, includeChildren = false): void {
       if (depth > (username ? 3 : 4)) return
       let entries: fs.Dirent[]
       try { entries = fs.readdirSync(directory, { withFileTypes: true }) } catch { return }
       // File entries are intentionally not indexed; only directories are retained.
-      if (path.basename(directory).toLowerCase() === 'img' || path.basename(directory).toLowerCase() === 'image') directories!.push(directory)
-      for (const entry of entries) if (entry.isDirectory()) visit(path.join(directory, entry.name), depth + 1)
+      if (path.basename(directory).toLowerCase() === 'img' || path.basename(directory).toLowerCase() === 'image' || includeChildren) directories!.push(directory)
+      for (const entry of entries) if (entry.isDirectory()) visit(path.join(directory, entry.name), depth + 1, includeChildren)
     }
     for (const base of roots) visit(base, 0)
-    visit(path.join(root, 'FileStorage/Image'), 0)
+    visit(path.join(root, 'FileStorage/Image'), 0, true)
     return directories
   }
   const get = cache.get.bind(cache)
   cache.get = (hash: string) => {
     const existing = get(hash)
-    if (existing) return existing
+    if (existing?.length) return existing
     if (!/^[a-f\d]{32}$/i.test(hash)) return undefined
     const files: string[] = []
-    for (const directory of lookup()) {
+    const prefixDirectory = path.join(attachment, hash.slice(0, 2), hash.slice(2, 4))
+    for (const directory of [...lookup(), prefixDirectory, ...['Img', 'Image', 'image'].map(name => path.join(prefixDirectory, name))]) {
       for (const filename of imageVariantNames(hash)) {
         const file = path.join(directory, filename)
         try { if (fs.statSync(file).isFile()) files.push(file) } catch { /* Resource not downloaded in this month. */ }
+      }
+    }
+    // Some WeChat versions store attachments under a different conversation key.
+    // Only fall back after the scoped lookup misses, and still require an exact hash.
+    if (!files.length && username) {
+      if (!fallbackDirectories) {
+        fallbackDirectories = []
+        const visit = (directory: string, depth: number): void => {
+          if (depth > 5) return
+          let entries: fs.Dirent[]
+          try { entries = fs.readdirSync(directory, { withFileTypes: true }) } catch { return }
+          if (/^(?:img|image)$/i.test(path.basename(directory))) fallbackDirectories!.push(directory)
+          for (const entry of entries) if (entry.isDirectory()) visit(path.join(directory, entry.name), depth + 1)
+        }
+        visit(attachment, 0)
+      }
+      for (const directory of fallbackDirectories) {
+        for (const filename of imageVariantNames(hash)) {
+          const file = path.join(directory, filename)
+          try { if (fs.lstatSync(file).isFile()) files.push(file) } catch { /* Optional variant. */ }
+        }
       }
     }
     try {
@@ -162,7 +185,8 @@ export function presentMessage(type: number, content: string, images: Map<string
       }
       if (best) return { text: '[图片]', image: { source: cacheImagePreview(best.data, best.mime), thumbnail: best.thumbnail, hashes } }
       const found = files
-      const unavailable = !found.length ? '图片尚未下载到本机'
+      const unavailable = !hashes.length ? '消息缺少图片定位信息'
+        : !found.length ? '未找到对应的本地图片文件'
         : decryptedUnsupported ? '图片已解密，但微信专用格式暂不能显示；请在微信中打开图片以生成缩略图后刷新'
         : !imageKeys.get(images)?.length ? '未找到图片密钥，请在微信中打开一张图片后刷新'
         : '图片解密失败或格式暂不支持，请在微信中打开原图后刷新'

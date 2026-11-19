@@ -1,10 +1,34 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { setImmediate } from 'node:timers/promises'
 
 /** Non-destructive import: only the installation directory is written. */
-export function migrateLegacyStorage(root: string, previous: { userData: string; appData: string; documents: string }): void {
+export async function migrateLegacyStorage(root: string, previous: { userData: string; appData: string; documents: string }): Promise<void> {
   const marker = path.join(root, 'storage-initialized.json')
+  // Repair earlier imports that skipped a non-empty data directory. Never replace
+  // a key already saved by this installation, or decrypt keys during migration.
+  const keyTarget = path.join(root, 'data', 'database-keys')
+  const keySource = path.join(previous.userData, 'database-keys')
+  if ((fs.existsSync(marker) || (fs.existsSync(path.join(root, 'data')) && fs.readdirSync(path.join(root, 'data')).length > 0)) && path.resolve(previous.userData) !== path.resolve(root, 'data')) {
+    if (fs.existsSync(keySource) && !fs.lstatSync(keySource).isSymbolicLink()) {
+      fs.mkdirSync(keyTarget, { recursive: true })
+      for (const name of await fs.promises.readdir(keySource)) {
+        if (!name.endsWith('.bin')) continue
+        const source = path.join(keySource, name), target = path.join(keyTarget, name)
+        if (!fs.lstatSync(source).isFile() || fs.existsSync(target)) continue
+        await fs.promises.copyFile(source, target, fs.constants.COPYFILE_EXCL)
+        fs.chmodSync(target, 0o600)
+      }
+    }
+    const source = path.join(previous.userData, 'wechat-db-key.bin')
+    const target = path.join(root, 'data', 'wechat-db-key.bin')
+    if (fs.existsSync(source) && fs.lstatSync(source).isFile() && !fs.existsSync(target)) {
+      fs.mkdirSync(path.dirname(target), { recursive: true })
+      await fs.promises.copyFile(source, target, fs.constants.COPYFILE_EXCL)
+      fs.chmodSync(target, 0o600)
+    }
+  }
   if (fs.existsSync(marker)) return
   let cache = path.join(previous.userData, 'cache')
   const config = path.join(previous.userData, 'cache-directory.json')
@@ -26,7 +50,8 @@ export function migrateLegacyStorage(root: string, previous: { userData: string;
     if (!fs.existsSync(source) || fs.readdirSync(target).length || path.resolve(source).toLowerCase() === path.resolve(target).toLowerCase()) continue
     const stage = path.join(root, `.import-${randomUUID()}`)
     try {
-      fs.cpSync(source, stage, { recursive: true, filter: file => {
+      await setImmediate()
+      await fs.promises.cp(source, stage, { recursive: true, filter: file => {
         if (fs.lstatSync(file).isSymbolicLink()) return false
         const part = path.relative(source, file).split(path.sep)[0].toLowerCase()
         const sessionEntries = ['local storage', 'session storage', 'indexeddb', 'network', 'preferences', 'secure preferences', 'cookies', 'local state']

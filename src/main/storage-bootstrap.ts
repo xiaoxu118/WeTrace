@@ -27,7 +27,7 @@ try {
   app.commandLine.appendSwitch('disk-cache-dir', path.join(storage.session, 'Cache'))
   app.commandLine.appendSwitch('log-file', path.join(storage.logs, 'chromium.log'))
 } catch (error) {
-  dialog.showErrorBox('无法创建应用数据目录', `请将 WeTrace 安装到可写目录后重试。${error instanceof Error ? error.message : ''}`)
+  dialog.showErrorBox('无法创建应用数据目录', `无法写入 ${path.join(installation, 'WeTrace')}。${process.platform === 'darwin' ? '请先将应用从 DMG 拖到可写的安装目录；移动应用时请同时移动旁边的 WeTrace 数据文件夹。' : '请将 WeTrace 安装到可写目录后重试；macOS 请先将应用移出 DMG，移动应用时同时移动旁边的 WeTrace 数据文件夹。'}${error instanceof Error ? error.message : ''}`)
   app.exit(1)
   throw error
 }
