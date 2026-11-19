@@ -1,4 +1,4 @@
-import { selectProfileClips } from './profile-evidence'
+import type { ProfileMessagePage, ProfilePageQuery } from '../shared/person-profile'
 import { SyncPresentationCache } from './sync-presentation-cache'
 import { refreshOriginalImage } from './recall-original-image'
 import { recoverCapturedAttachments } from './recall-attachment-recovery'
@@ -135,6 +135,14 @@ function monthLabel(seconds: number): string {
   return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, '0')}`
 }
 
+function conversationType(id: string, isVerifiedAccount?: boolean): SyncConversation['type'] {
+  if (id.endsWith('@chatroom')) return 'group'
+  const username = id.toLowerCase()
+  return isVerifiedAccount || username.startsWith('gh_') ||
+    ['brandsessionholder', 'notification_messages', 'newsapp', 'weixin', 'officialaccounts'].includes(username)
+    ? 'official' : 'friend'
+}
+
 export function syncWechatRecords(account: WechatAccount, key: string, indexDirectory?: string): SyncResult {
   const client = recordsClient(account, key)
   const policy = JSON.stringify(excludedConversations(account.root))
@@ -179,6 +187,9 @@ export function syncWechatRecords(account: WechatAccount, key: string, indexDire
     const messages: SyncMessage[] = rows.map((row) => {
       const mine = row.isSend || row.sender === account.wxid
       if (isGroup && !mine && row.sender) profileUsernames.add(row.sender)
+      const presentation = firstConversation
+        ? syncPresentations.read(account.root, key, username, row, () => presentRetainedMessage(account, key, username, row, images))
+        : presentMessage(row.type, row.content, images, row.imageFileHash)
       return {
         id: row.id, serverId: row.serverId,
         createdAt: row.createTime * 1000,
@@ -186,9 +197,8 @@ export function syncWechatRecords(account: WechatAccount, key: string, indexDire
         from: mine ? 'me' : 'them',
         senderId: isGroup ? (mine ? account.wxid : row.sender || undefined) : undefined,
         sender: isGroup && !mine ? row.sender || undefined : undefined,
-        ...(firstConversation
-          ? syncPresentations.read(account.root, key, username, row, () => presentRetainedMessage(account, key, username, row, images))
-          : presentMessage(row.type, row.content, images, row.imageFileHash)),
+        ...presentation,
+        ...(!firstConversation && presentation.image ? { image: { hashes: presentation.image.hashes } } : {}),
         time: clock(row.createTime),
       }
     })
@@ -198,7 +208,7 @@ export function syncWechatRecords(account: WechatAccount, key: string, indexDire
     conversations.push({
       id: username,
       name: session.nickname && session.nickname !== username ? session.nickname : isGroup ? '未命名群聊' : '未命名联系人',
-      type: isGroup ? 'group' : username.startsWith('gh_') || ['brandsessionholder', 'notification_messages', 'newsapp', 'weixin', 'officialaccounts'].includes(username) ? 'official' : 'friend',
+      type: conversationType(username),
       time: clock(session.lastActive || last.createTime),
       preview: messages[messages.length - 1]?.text ?? '',
       unread: session.unreadCount || undefined,
@@ -224,6 +234,7 @@ export function syncWechatRecords(account: WechatAccount, key: string, indexDire
   const profiles = client.getProfiles([...profileUsernames])
   for (const conversation of conversations) {
     const conversationProfile = profiles.get(conversation.id)
+    if (conversation.type === 'friend' && conversationProfile?.isVerifiedAccount) conversation.type = 'official'
     if (conversationProfile?.nickname && conversationProfile.nickname !== conversation.id) conversation.name = conversationProfile.nickname
     conversation.avatar = conversationProfile?.avatar
     const groupNames = conversation.type === 'group' ? client.getGroupNicknames(conversation.id) : new Map<string, string>()
@@ -504,7 +515,7 @@ export function readIndexedConversation(directory: string, account: WechatAccoun
   }))
   const summary = indexed ? indexed.summary : client.aggregateConversation(conversationId) as ConversationIndexSummary
   return { id: conversationId, name: profiles.get(conversationId)?.nickname || conversationId, avatar: profiles.get(conversationId)?.avatar,
-    type: conversationId.endsWith('@chatroom') ? 'group' : conversationId.startsWith('gh_') ? 'official' : 'friend',
+    type: conversationType(conversationId, profiles.get(conversationId)?.isVerifiedAccount),
     time: rows.length ? clock(rows[rows.length - 1].createTime) : '', preview: messages[messages.length - 1]?.text || '',
     records: summary.total.toLocaleString('en-US'), range: summary.firstAt === null ? '' : `${monthLabel(summary.firstAt / 1000)} — ${monthLabel(summary.lastAt! / 1000)}`,
     day: rows.length ? dayLabel(rows[rows.length - 1].createTime) : '', messages: conversationCacheAllowed(account.root, conversationId) ? retainedRecallMessages(messages, loadMonitor(join(directory, '..', 'group-monitor'), account.root, key).rooms.find(room => room.id === conversationId)) : messages }
@@ -516,11 +527,11 @@ export function loadReportParticipantProfiles(account: WechatAccount, key: strin
   return top.map(member => ({ ...member, name: member.name && member.name !== '我' ? member.name : (member.id ? profiles.get(member.id)?.nickname || member.id : '未知成员'), avatar: member.id ? profiles.get(member.id)?.avatar || member.avatar : member.avatar }))
 }
 
-export function readWechatProfileEvidence(directory: string, account: WechatAccount, key: string, conversationId: string, memberId: string) {
+export function readWechatProfileEvidence(directory: string, account: WechatAccount, key: string, conversationId: string, memberId: string, query: ProfilePageQuery): ProfileMessagePage {
   if (!conversationCacheAllowed(account.root, conversationId)) throw new Error('该会话已排除索引，无法生成画像')
-  const windows = readChatIndex(directory, account, key, index => index.hasConversation(conversationId)
-    ? index.profileWindows(conversationId, memberId) : undefined)
-  if (!windows) throw new Error('请先在「缓存与索引」中建立该会话的索引')
+  const page = readChatIndex(directory, account, key, index => index.hasConversation(conversationId)
+    ? index.profileMessagePage(conversationId, memberId, query) : undefined)
+  if (!page) throw new Error('请先在「缓存与索引」中建立该会话的索引')
 
   const speakers = new Map<string, number>()
   const textMessage = (row: WcdbMessage, sender: string): import('../shared/person-profile').ProfileMessage => {
@@ -529,19 +540,19 @@ export function readWechatProfileEvidence(directory: string, account: WechatAcco
     return {
       id: row.id, createdAt: row.createTime * 1000, target,
       speaker: target ? 0 : speakers.get(sender)!,
-      text: row.content.trim().slice(0, 320),
+      text: row.content,
     }
   }
-  const buckets = windows.buckets.map(bucket => bucket.map(window => {
+  const clips = page.rows.map(window => {
     const anchor = textMessage(window.anchor, memberId)
     const messages = [
       ...window.previous.map(item => textMessage(item.message, item.sender)),
       anchor,
       ...window.following.map(item => textMessage(item.message, item.sender)),
     ].filter(message => message.text)
-    return { anchor, messages }
-  }))
-  return { from: windows.from, to: windows.to, evidence: selectProfileClips(buckets) }
+    return { anchor, messages, serverId: window.anchor.serverId }
+  })
+  return { snapshot: page.snapshot, next: page.next, clips }
 }
 
 export function listWechatGroupMembers(account: WechatAccount, key: string, conversationId: string): import('../shared/types').GroupMember[] {
@@ -558,14 +569,17 @@ export function listWechatGroupMembers(account: WechatAccount, key: string, conv
 export function listWechatConversationOptions(account: WechatAccount, key: string, textOnly = false): import('../shared/types').ConversationOption[] {
   const client = recordsClient(account, key)
   const sessions = client.getSessions().filter(item => item.username && item.username !== 'filehelper').sort((a, b) => b.lastActive - a.lastActive)
-  const names = textOnly ? client.getDisplayNames(sessions.filter(item => !item.nickname || item.nickname === item.username).map(item => item.username)) : undefined
+  const names = textOnly ? client.getPersonalContactNames(sessions.filter(item => !item.username.endsWith('@chatroom') && item.username !== account.wxid).map(item => item.username)) : undefined
+  const groupNames = textOnly ? client.getDisplayNames(sessions
+    .filter(item => item.username.endsWith('@chatroom') && (!item.nickname || item.nickname === item.username))
+    .map(item => item.username)) : undefined
   const profiles = textOnly ? undefined : client.getProfiles(sessions.map(item => item.username))
-  return sessions.map(item => ({
+  return sessions.filter(item => !names || item.username.endsWith('@chatroom') || names.has(item.username)).map(item => ({
     id: item.username,
-    name: [profiles?.get(item.username)?.nickname, item.nickname, names?.get(item.username)].find(name => name && name !== item.username)
+    name: [profiles?.get(item.username)?.nickname, item.nickname, names?.get(item.username), groupNames?.get(item.username)].find(name => name && name !== item.username)
       || (item.username.endsWith('@chatroom') ? '未命名群聊' : '未命名联系人'),
     avatar: profiles?.get(item.username)?.avatar,
-    type: item.username.endsWith('@chatroom') ? 'group' : item.username.startsWith('gh_') || ['brandsessionholder', 'notification_messages', 'newsapp', 'weixin', 'officialaccounts'].includes(item.username) ? 'official' : 'friend',
+    type: conversationType(item.username, profiles?.get(item.username)?.isVerifiedAccount),
   }))
 }
 

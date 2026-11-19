@@ -48,8 +48,30 @@ function fixture(relative, statements, encrypted = true) {
   return file
 }
 try {
-  const session = fixture('session/session.db', ['CREATE TABLE SessionTable(username TEXT, last_timestamp INTEGER, unread_count INTEGER)', `INSERT INTO SessionTable VALUES('${room}', 1700000003, 2)`])
-  fixture('contact/contact.db', ['CREATE TABLE contact(username TEXT, nick_name TEXT, remark TEXT, big_head_url TEXT, small_head_url TEXT)', "INSERT INTO contact VALUES('wxid_fixture', '虚构昵称', '虚构备注', 'https://example.invalid/avatar', '')", "INSERT INTO contact VALUES('wxid_other', '虚构其他成员', '', '', 'http://wx.qlogo.cn/fictional-avatar')"])
+  const session = fixture('session/session.db', [
+    'CREATE TABLE SessionTable(username TEXT, last_timestamp INTEGER, unread_count INTEGER)',
+    `INSERT INTO SessionTable VALUES('${room}', 1700000003, 2), ('legacy_friend', 1700000002, 0), ('gh_fixture', 1700000001, 0), ('service_fixture', 1700000000, 0), ('unknown_session', 1699999999, 0)`,
+  ])
+  const protoField = (tag, data) => Buffer.concat([Buffer.from([tag, data.length]), data])
+  const nickname = protoField(10, Buffer.concat([
+    protoField(10, Buffer.from('wxid_fixture')),
+    protoField(18, Buffer.from('虚构群昵称')),
+    Buffer.from([24, 1]),
+  ])).toString('hex')
+  fixture('contact/contact.db', [
+    'CREATE TABLE contact(id INTEGER PRIMARY KEY, username TEXT, nick_name TEXT, remark TEXT, big_head_url TEXT, small_head_url TEXT)',
+    "INSERT INTO contact VALUES(11, 'wxid_fixture', '虚构昵称', '虚构备注', 'https://example.invalid/avatar', '')",
+    "INSERT INTO contact VALUES(12, 'wxid_other', '虚构其他成员', '', '', 'http://wx.qlogo.cn/fictional-avatar')",
+    "INSERT INTO contact VALUES(13, 'wxid_silent', '虚构未发言成员', '', '', '')",
+    `INSERT INTO contact VALUES(17, '${room}', '虚构群聊名称', '', '', '')`,
+    'ALTER TABLE contact ADD COLUMN flag INTEGER DEFAULT 3',
+    'ALTER TABLE contact ADD COLUMN verify_flag INTEGER DEFAULT 0',
+    "INSERT INTO contact(id, username, nick_name, flag, verify_flag) VALUES(14, 'legacy_friend', '虚构好友', 3, 0), (15, 'gh_fixture', '虚构公众号', 3, 0), (16, 'service_fixture', '虚构服务号', 3, 8)",
+    'CREATE TABLE chat_room(id INTEGER PRIMARY KEY, username TEXT, ext_buffer BLOB)',
+    `INSERT INTO chat_room VALUES(21, '${room}', x'${nickname}'), (22, 'other@chatroom', x'0a05')`,
+    'CREATE TABLE chatroom_member(room_id INTEGER, member_id INTEGER, UNIQUE(room_id, member_id))',
+    'INSERT INTO chatroom_member VALUES(21, 11), (21, 13), (22, 12)',
+  ])
   const avatar = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jZioAAAAASUVORK5CYII=', 'base64')
   const headFile = fixture('head_image/head_image.db', ['CREATE TABLE head_image(username TEXT, image_buffer BLOB)', `INSERT INTO head_image VALUES('wxid_fixture', x'${avatar.toString('hex')}')`], false)
   for (let i = 0; i < 2; i++) fixture(`message/message_${i}.db`, [
@@ -61,8 +83,28 @@ try {
   const hashes = () => files.map(file => createHash('sha256').update(fs.readFileSync(file)).digest('hex'))
   const before = hashes()
   const client = new Wcdb4Client(key, account)
-  assert.equal(client.getSessions()[0].username, room)
+  assert.ok(client.getSessions().some(session => session.username === room))
   assert.equal(client.getDisplayNames(['wxid_fixture']).get('wxid_fixture'), '虚构备注')
+  assert.deepEqual(client.getGroupMemberIds(room).sort(), ['wxid_fixture', 'wxid_silent'])
+  assert.deepEqual(client.getGroupMemberIds('other@chatroom'), ['wxid_other'])
+  assert.throws(() => client.getGroupMemberIds("missing'@chatroom"), /本地未找到当前群成员名单/)
+  assert.deepEqual(client.getGroupNicknames(room), new Map([['wxid_fixture', '虚构群昵称']]))
+  assert.equal(client.getGroupNicknames('other@chatroom').size, 0)
+  const { listWechatGroupMembers, listWechatConversationOptions } = await import('../src/main/wechat-records.ts')
+  const fixtureAccount = { root: account, id: 'fixture', wxid: 'wxid_fixture' }
+  const members = listWechatGroupMembers(fixtureAccount, key, room)
+  assert.deepEqual(new Map(members.map(member => [member.id, member.name])), new Map([
+    ['wxid_fixture', '虚构群昵称'],
+    ['wxid_silent', '虚构未发言成员'],
+  ]))
+  assert.deepEqual(listWechatConversationOptions(fixtureAccount, key, true).map(({ id, name }) => [id, name]), [
+    [room, '虚构群聊名称'],
+    ['legacy_friend', '虚构好友'],
+  ])
+  const conversationTypes = new Map(listWechatConversationOptions(fixtureAccount, key).map(({ id, type }) => [id, type]))
+  assert.equal(conversationTypes.get('legacy_friend'), 'friend')
+  assert.equal(conversationTypes.get('gh_fixture'), 'official')
+  assert.equal(conversationTypes.get('service_fixture'), 'official')
   const profiles = client.getProfiles(['wxid_fixture', 'wxid_other'])
   const localAvatar = profiles.get('wxid_fixture').avatar
   assert.match(localAvatar, /^wetrace-media:\/\/preview\//)
@@ -88,7 +130,7 @@ try {
   }
   const direct = new WindowsWcdbDatabase(path.resolve('resources/wcdb/windows/x64/WCDB.dll'))
   assert.throws(() => direct.query(session, '42'.repeat(32), 'SELECT * FROM SessionTable'), /密钥或加密参数/)
-  assert.equal(direct.query(session, key, 'SELECT * FROM SessionTable').length, 1)
+  assert.equal(direct.query(session, key, 'SELECT * FROM SessionTable').length, 5)
   assert.throws(() => direct.query(session, key, 'DELETE FROM SessionTable'), /只读/)
   assert.throws(() => direct.query(session, key, 'PRAGMA journal_mode=WAL'), /只读/)
   const bridge = createWindowsBindings(path.resolve('resources/wcdb/windows/x64/WCDB.dll')), out = [0]
@@ -96,5 +138,5 @@ try {
   const outside = path.join(root, 'outside.db'); fs.copyFileSync(session, outside)
   assert.throws(() => bridge.execQuery(out[0], 'message', outside, 'SELECT 1', [null]), /当前账号/)
   assert.deepEqual(hashes(), before)
-  console.log('Windows独立适配回归通过：会话、备注、文字、跨分库分页、发送人、64位ID、统计、索引、错误密钥、账号隔离及只读保护')
+  console.log('Windows独立适配回归通过：会话、备注、群成员、群昵称、文字、跨分库分页、发送人、64位ID、统计、索引、错误密钥、账号隔离及只读保护')
 } finally { WindowsWcdbDatabase.closeAll(); fs.rmSync(root, { recursive: true, force: true }) }

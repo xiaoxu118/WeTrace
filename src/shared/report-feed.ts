@@ -974,18 +974,21 @@ export function renderReportFeed(data: Entry, document: FeedDocument): string {
   const authors = new Map((document.messageAuthors ?? []).map(author => [author.reference, author.key]))
   const sources = new Map((document.sourceMessages ?? []).map(message => [message.reference, message]))
   const members = (document.members ?? document.participants ?? []).filter(member => member.name !== '微信系统消息')
+  const membersByKey = new Map(members.map(member => [member.key, member]))
   const people = new Map(members.map(member => [member.name, member]))
+  const author = (reference: string) => membersByKey.get(authors.get(reference) ?? '')
   const references = (item: Entry) => [...new Set(strings(item.sourceMessageIds))].filter(id => authors.has(id))
+  const personFor = (item: Entry, name: string) =>
+    references(item).map(author).find(member => member?.name === name) ?? people.get(name)
   // A candidate without any real input reference is not shown as a supported fact.
   const candidates = (key: string, limit = 50) => entries(data[key]).filter(item => references(item).length).slice(0, limit)
-  const avatar = (name: string) => {
-    const member = people.get(name)
+  const avatar = (name: string, member: FeedMember | undefined) => {
     const source = member?.avatar
     return source && /^data:image\/(?:png|jpeg|webp|gif);base64,[a-zA-Z0-9+/=]+$/.test(source)
       ? `<img class="avatar" src="${escape(source)}" alt="${escape(name)}">`
       : `<span class="avatar-placeholder" aria-label="${escape(name)}">${escape([...name][0] || '人')}</span>`
   }
-  const chip = (name: string) => `<span class="person-chip">${avatar(name)}<b>${escape(name)}</b></span>`
+  const chip = (member: FeedMember) => `<span class="person-chip">${avatar(member.name, member)}<b>${escape(member.name)}</b></span>`
   const policy = reportFeedPolicy(document.messageCount, document.startDate, document.endDate, document.styleId ?? '')
   const topics = candidates('topics', policy.maxTopics)
   const topicCards = topics.map(topic => {
@@ -1000,32 +1003,38 @@ export function renderReportFeed(data: Entry, document: FeedDocument): string {
     const max = Math.max(1, ...topics.map(item => references(item).length))
     const ratio = refs.length / max
     const heat = ratio >= .67 ? '高' : ratio >= .34 ? '中' : '低'
-    return `<article class="topic-card"><div class="topic-title-row"><h3>${escape(topic.title)}</h3><span class="heat ${heat === '高' ? 'hot' : heat === '中' ? 'blue' : ''}" title="按引用消息数相对计算">${heat}热</span></div><div class="topic-meta">${escape(topicTime)}</div><p>${escape(topic.summary)}</p>${conclusions.length ? `<div class="topic-conclusions">${conclusions.map(value => `<div class="topic-conclusion">${escape(value)}</div>`).join('')}</div>` : ''}<div class="participants">${participants.slice(0, 8).map(member => chip(member.name)).join('')}</div><div class="keywords">${strings(topic.keywords).slice(0, 6).map(value => `<span>${escape(value)}</span>`).join('')}</div></article>`
+    return `<article class="topic-card"><div class="topic-title-row"><h3>${escape(topic.title)}</h3><span class="heat ${heat === '高' ? 'hot' : heat === '中' ? 'blue' : ''}" title="按引用消息数相对计算">${heat}热</span></div><div class="topic-meta">${escape(topicTime)}</div><p>${escape(topic.summary)}</p>${conclusions.length ? `<div class="topic-conclusions">${conclusions.map(value => `<div class="topic-conclusion">${escape(value)}</div>`).join('')}</div>` : ''}<div class="participants">${participants.slice(0, 8).map(chip).join('')}</div><div class="keywords">${strings(topic.keywords).slice(0, 6).map(value => `<span>${escape(value)}</span>`).join('')}</div></article>`
   }).join('')
   const important = candidates('importantMessages', policy.maxImportant).map(item => {
     const source = references(item).map(id => sources.get(id)).find(Boolean)
     const sender = source?.sender ?? (people.has(text(item.sender)) ? text(item.sender) : '')
-    return `<article class="important-card">${avatar(sender)}<div class="important-body"><div class="important-meta"><b>${escape(sender)}</b><span>${escape(source?.time ?? item.time)}</span></div><div class="important-text">${escape(item.content)}</div><div class="important-note">${escape(item.note)}</div></div></article>`
+    return `<article class="important-card">${avatar(sender, source ? author(source.reference) : personFor(item, sender))}<div class="important-body"><div class="important-meta"><b>${escape(sender)}</b><span>${escape(source?.time ?? item.time)}</span></div><div class="important-text">${escape(item.content)}</div><div class="important-note">${escape(item.note)}</div></div></article>`
   }).join('')
   const quotes = candidates('quotes', policy.maxQuotes).map(item => {
     const messages = entries(item.messages).slice(0, 4).flatMap(message => {
       const source = sources.get(text(message.sourceMessageId))
       // Quotes must be a literal extract from an actual message by that speaker.
       if (!source || source.sender === '微信系统消息' || !text(message.content) || !source.text.includes(text(message.content))) return []
-      return [`<div class="chat-msg">${avatar(source.sender)}<div><div class="chat-name">${escape(source.sender)}</div><div class="chat-bubble">${escape(message.content)}</div></div></div>`]
+      return [`<div class="chat-msg">${avatar(source.sender, author(source.reference))}<div><div class="chat-name">${escape(source.sender)}</div><div class="chat-bubble">${escape(message.content)}</div></div></div>`]
     })
     return messages.length ? `<article class="chat-block">${messages.join('')}<div class="quote-note">${escape(item.note)}</div></article>` : ''
   }).join('')
-  const qa = candidates('qa').map(item => `<article class="qa-card"><b>${escape(item.question)}</b><div>${escape(item.answer)}</div>${people.has(text(item.answerer)) ? `<div class="participants">${chip(text(item.answerer))}</div>` : ''}</article>`).join('')
+  const qa = candidates('qa').map(item => {
+    const member = personFor(item, text(item.answerer))
+    return `<article class="qa-card"><b>${escape(item.question)}</b><div>${escape(item.answer)}</div>${member ? `<div class="participants">${chip(member)}</div>` : ''}</article>`
+  }).join('')
   const todos = candidates('todos', policy.maxTodos).map(item => `<article class="action-card"><b>${escape(item.task)}</b><div>${people.has(text(item.owner)) ? escape(item.owner) : '负责人未明确'}${text(item.deadline) ? ` · ${escape(item.deadline)}` : ''}</div>${text(item.note) ? `<div>${escape(item.note)}</div>` : ''}</article>`).join('')
   const unresolved = candidates('unresolved', policy.maxUnresolved).map(item => `<article class="action-card"><b>${escape(item.question)}</b><div>${escape(item.status) || '待跟进'}</div><div>${escape(item.note)}</div></article>`).join('')
-  const resources = candidates('resources').map(item => `<article class="resource"><b>${escape(item.title)}</b><div>${escape(item.description)}</div>${people.has(text(item.sender)) ? `<div class="participants">${chip(text(item.sender))}</div>` : ''}</article>`).join('')
+  const resources = candidates('resources').map(item => {
+    const member = personFor(item, text(item.sender))
+    return `<article class="resource"><b>${escape(item.title)}</b><div>${escape(item.description)}</div>${member ? `<div class="participants">${chip(member)}</div>` : ''}</article>`
+  }).join('')
   const storylines = candidates('storylines').map(item => `<article class="storyline-card"><b>${escape(item.title)}</b>${entries(item.stages).filter(stage => references(stage).length).map(stage => `<p>${escape(stage.time)} · ${escape(stage.event)}</p>`).join('')}<p>${escape(item.result)}</p></article>`).join('')
   const reversals = candidates('reversals').map(item => `<article class="reversal-card"><b>${escape(item.topic)}</b><p>最初：${escape(item.initialView)}</p><p>最终：${escape(item.finalView)}</p><p>${escape(item.note)}</p></article>`).join('')
   const chains = candidates('participantChains').map(item => `<article class="chain-card"><b>${escape(item.topic)}</b><p>${strings(item.chain).map(escape).join(' → ')}</p><p>${escape(item.note)}</p></article>`).join('')
   const ranked = [...members].sort((a, b) => b.count - a.count || a.key.localeCompare(b.key)).slice(0, 10)
   const top = ranked.slice(0, 5)
-  const rank = ranked.map(member => `<div class="rank">${avatar(member.name)}<b>${escape(member.name)}</b><span>${member.count} 条</span></div>`).join('')
+  const rank = ranked.map(member => `<div class="rank">${avatar(member.name, member)}<b>${escape(member.name)}</b><span>${member.count} 条</span></div>`).join('')
   const heatBars = ranked.map(member => `<div class="heat-row"><span class="heat-name" title="${escape(member.name)}">${escape(member.name)}</span><span class="heat-bar"><i style="width:${Math.round(member.count / Math.max(1, top[0].count) * 100)}%"></i></span><span class="heat-val">${member.count}</span></div>`).join('')
   const keywords = strings(data.keywords).slice(0, 12).map((value, index) => `<span class="${index < 3 ? 'xl' : 'md'}">${escape(value)}</span>`).join('')
   const clock = (value: number) => new Date(value).toLocaleTimeString('zh-CN', { hour12: false })
@@ -1036,7 +1045,7 @@ export function renderReportFeed(data: Entry, document: FeedDocument): string {
     REPORT_DATE: escape(document.startDate === document.endDate ? document.startDate : `${document.startDate} 至 ${document.endDate}`), DATE_RANGE: '', TIME_SPAN: escape(range),
     HERO_HEADLINE: text(hero.headline) ? `<strong style="display:block;margin-bottom:6px">${escape(hero.headline)}</strong>` : '',
     DISCUSSION_WINDOW: document.firstAt !== undefined && document.lastAt !== undefined ? `${Math.round((document.lastAt - document.firstAt) / 60000)} 分钟` : '—',
-    HERO_SUMMARY: escape(hero.summary), HERO_AVATARS: top.map(member => avatar(member.name)).join(''), HERO_AVATAR_CLASS: '',
+    HERO_SUMMARY: escape(hero.summary), HERO_AVATARS: top.map(member => avatar(member.name, member)).join(''), HERO_AVATAR_CLASS: '',
     // Model-generated counts are deliberately replaced by counts of displayed, supported items.
     HERO_STATUS_LINE: topics.length || todos || unresolved ? `${topics.length} 个话题 · ${candidates('todos', policy.maxTodos).length} 个待办 · ${candidates('unresolved', policy.maxUnresolved).length} 个待跟进问题` : '',
     HERO_TAKEAWAY: text(hero.keyTakeaway) ? `关键结论：${escape(hero.keyTakeaway)}` : '', HERO_PENDING: text(hero.pendingNote) ? `值得跟进：${escape(hero.pendingNote)}` : '',

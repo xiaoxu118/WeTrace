@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-const logic=['test-wechat-version-gate.mjs','test-message-transport.mjs','test-native-resources.mjs','test-scheduled-messages.mjs','test-recall-capture-window.mjs','test-chat-recall-capture.mjs','test-retained-recalls.mjs','test-group-monitor.mjs','test-group-monitor-persistence.mjs']
+const logic=['test-wechat-version-gate.mjs','test-message-transport.mjs','test-native-resources.mjs','test-scheduled-messages.mjs','test-recall-capture-window.mjs','test-chat-recall-capture.mjs','test-retained-recalls.mjs','test-group-monitor.mjs','test-group-monitor-persistence.mjs','test-person-profile-store.mjs','test-person-profile-pipeline.mjs']
 const ui=['test-scheduled-messages-ui.cjs','test-chat-recall-ui.cjs','test-group-monitor-ui.cjs']
 for(const args of [...logic.map(file=>['--experimental-strip-types',`scripts/${file}`]),...ui.map(file=>['scripts/run-electron.mjs','exec',`scripts/${file}`])]){
  const result=spawnSync(process.execPath,args,{stdio:'inherit'})

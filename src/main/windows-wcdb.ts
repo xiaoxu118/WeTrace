@@ -11,6 +11,51 @@ type NativeType = string | ReturnType<typeof koffi.struct>
 type Connection = { db: ObjectHandle; handle: ObjectHandle; key: string; timer?: ReturnType<typeof setTimeout>; close: () => void }
 const quote = (name: string): string => `"${name.replaceAll('"', '""')}"`
 const literal = (value: string): string => `'${value.replaceAll("'", "''")}'`
+
+// Only length-delimited fields are needed for chat_room.ext_buffer.
+function* protobufBytes(data: Buffer): Generator<[number, Buffer]> {
+  let offset = 0
+  const invalid = () => new Error('群昵称数据格式无效')
+  const varint = () => {
+    let value = 0n
+    for (let shift = 0n; shift <= 63n && offset < data.length; shift += 7n) {
+      const byte = data[offset++]
+      if (shift === 63n && byte > 1) throw invalid()
+      value |= BigInt(byte & 127) << shift
+      if (byte < 128) return value
+    }
+    throw invalid()
+  }
+  while (offset < data.length) {
+    const tag = Number(varint())
+    if (tag < 8 || tag > 0xffffffff) throw invalid()
+    const wire = tag % 8
+    if (wire === 0) {
+      varint()
+      continue
+    }
+    if (wire !== 1 && wire !== 2 && wire !== 5) throw invalid()
+    const size = wire === 2 ? Number(varint()) : wire === 1 ? 8 : 4
+    const end = offset + size
+    if (end > data.length) throw invalid()
+    if (wire === 2) yield [tag >>> 3, data.subarray(offset, end)]
+    offset = end
+  }
+}
+
+function groupNicknames(data: Buffer): { username: string; nickname: string }[] {
+  const names: { username: string; nickname: string }[] = []
+  for (const [field, member] of protobufBytes(data)) {
+    if (field !== 1) continue
+    let username = '', nickname = ''
+    for (const [field, bytes] of protobufBytes(member)) {
+      if (field === 1) username = bytes.toString('utf8')
+      if (field === 2) nickname = bytes.toString('utf8').trim()
+    }
+    if (username && nickname) names.push({ username, nickname })
+  }
+  return names
+}
 const field = (columns: string[], candidates: string[]): string | undefined => candidates.find(name => columns.includes(name))
 
 /** Tencent's public C bridge, without the application-specific wcdb_api layer. */
@@ -201,6 +246,33 @@ export function createWindowsBindings(file: string): NativeBindings {
       return result(output, query(id, file, `SELECT *, ${quote(user)} AS username FROM ${quote(table)}`))
     },
     getDisplayNames: (id, input, output) => result(output, contacts(id, JSON.parse(input))),
+    getGroupMembers: (id, username, output) => {
+      const file = path.join(account(id).root, 'contact', 'contact.db')
+      if (!fs.existsSync(file)) throw new Error('本地未找到联系人数据库')
+      const names = tables(id, file)
+      if (!['chat_room', 'chatroom_member', 'contact'].every(name => names.includes(name))) {
+        throw new Error('本地联系人数据库缺少群成员表')
+      }
+      const rows = query(id, file, `
+        SELECT DISTINCT c.username
+        FROM chat_room AS r
+        JOIN chatroom_member AS m ON m.room_id = r.id
+        LEFT JOIN contact AS c ON c.id = m.member_id
+        WHERE r.username = ${literal(username)}
+      `)
+      if (rows.some(row => typeof row.username !== 'string' || !row.username.trim())) {
+        throw new Error('本地群成员名单不完整')
+      }
+      return result(output, rows)
+    },
+    getGroupNicknames: (id, username, output) => {
+      const file = path.join(account(id).root, 'contact', 'contact.db')
+      const [room] = query(id, file, `
+        SELECT ext_buffer FROM chat_room WHERE username = ${literal(username)}
+      `)
+      const data = room?.ext_buffer
+      return result(output, Buffer.isBuffer(data) ? groupNicknames(data) : [])
+    },
     getAvatarUrls: (id, input, output) => result(output, contacts(id, JSON.parse(input)).map(row => {
       const value = ['big_head_img_url', 'big_head_url', 'bigHeadImgUrl', 'bigHeadUrl', 'small_head_img_url', 'small_head_url', 'smallHeadImgUrl', 'smallHeadUrl', 'head_img_url', 'headImgUrl', 'avatar_url', 'avatarUrl'].map(name => row[name]).find(value => typeof value === 'string' && value.trim())
       const url = typeof value === 'string' ? value.trim().replace(/^http:\/\/(?=(?:[a-z0-9-]+\.)*(?:qlogo|qpic)\.cn(?:\/|$))/i, 'https://') : ''

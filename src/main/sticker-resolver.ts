@@ -14,11 +14,11 @@ export function stickerUrl(raw: string): string {
     || !['qpic.cn', 'qq.com', 'wechat.com'].some(domain => host === domain || host.endsWith(`.${domain}`))) throw new Error('表情包地址不是支持的微信资源地址')
   return url.href
 }
-async function download(url: string, fetcher: typeof fetch): Promise<Buffer> {
-  const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 15000)
+export async function downloadWechatImage(url: string, fetcher: typeof fetch, validateUrl = stickerUrl, maxBytes = MAX_BYTES, timeout = 15000): Promise<Buffer> {
+  const controller = new AbortController(), timer = setTimeout(() => controller.abort(), timeout)
   try {
     for (let redirect = 0; redirect <= 5; redirect++) {
-      const response = await fetcher(stickerUrl(url), { redirect: 'manual', signal: controller.signal, headers: { 'User-Agent': 'Mozilla/5.0 MicroMessenger WeTrace', Referer: 'https://weixin.qq.com/' } })
+      const response = await fetcher(validateUrl(url), { redirect: 'manual', signal: controller.signal, headers: { 'User-Agent': 'Mozilla/5.0 MicroMessenger WeTrace', Referer: 'https://weixin.qq.com/' } })
       if ([301, 302, 303, 307, 308].includes(response.status)) {
         const next = response.headers.get('location')
         await response.body?.cancel()
@@ -30,7 +30,7 @@ async function download(url: string, fetcher: typeof fetch): Promise<Buffer> {
         await response.body?.cancel()
         throw new Error([403, 404, 410].includes(response.status) ? '表情包链接已过期或不可访问，请在微信中重新打开后重试' : `表情包下载失败（${response.status}）`)
       }
-      if (Number(response.headers.get('content-length')) > MAX_BYTES) { await response.body?.cancel(); throw new Error('表情包文件超过 20 MB') }
+      if (Number(response.headers.get('content-length')) > maxBytes) { await response.body?.cancel(); throw new Error('表情包文件超过 20 MB') }
       const reader = response.body?.getReader()
       if (!reader) throw new Error('表情包内容为空')
       const chunks: Buffer[] = []; let size = 0
@@ -39,7 +39,7 @@ async function download(url: string, fetcher: typeof fetch): Promise<Buffer> {
           const { done, value } = await reader.read()
           if (done) break
           size += value.length
-          if (size > MAX_BYTES) { await reader.cancel(); throw new Error('表情包文件超过 20 MB') }
+          if (size > maxBytes) { await reader.cancel(); throw new Error('表情包文件超过 20 MB') }
           chunks.push(Buffer.from(value))
         }
       } finally { reader.releaseLock() }
@@ -82,12 +82,12 @@ export class StickerResolver {
       let url = cdnUrl || await lookup()
       if (!url) throw new Error('本地没有可用表情包，微信表情库也未提供下载地址')
       let data: Buffer
-      try { data = await download(url, this.fetcher) }
+      try { data = await downloadWechatImage(url, this.fetcher) }
       catch (error) {
         if (!cdnUrl) throw error
         url = await lookup()
         if (!url || url === cdnUrl) throw error
-        data = await download(url, this.fetcher)
+        data = await downloadWechatImage(url, this.fetcher)
       }
       const mime = imageMime(data)!
       try { await mkdir(this.directory, { recursive: true, mode: 0o700 }); await writeFile(`${file}.tmp`, data, { mode: 0o600 }); await rename(`${file}.tmp`, file) } catch { /* Display remains available if disk caching fails. */ }

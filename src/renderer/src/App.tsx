@@ -168,7 +168,7 @@ function MessageContent({ message, root, conversationId }: { message: SyncMessag
   if (message.image) {
     return message.image.source && failedImage !== message.image.source
       ? <Image className="message-image" classNames={{ root: 'message-image-preview' }} src={message.image.source} alt="聊天图片" loading="lazy" tabIndex={0} aria-label="查看聊天图片大图" preview={{ open: imagePreviewOpen, onOpenChange: open => { void openImagePreview(open) }, src: previewImage?.source, imageRender: original => <>{original}{previewNote && <div className="image-preview-note" role="status">{previewNote}</div>}</> }} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); void openImagePreview(true) } }} onError={() => { previewOpen.current = false; previewRequest.current++; setImagePreviewOpen(false); setFailedImage(message.image?.source) }} />
-      : <span className="message-unavailable">{message.image.unavailable || '图片读取失败'}</span>
+      : <span className="message-unavailable">{message.image.unavailable || (message.image.source ? '图片读取失败' : '[图片]')}</span>
   }
   if (message.link) {
     return <a className="message-link" href={message.link.url} target="_blank" rel="noopener noreferrer">
@@ -839,10 +839,8 @@ export default function App() {
   const [reportFormat, setReportFormat] = useState<ReportFormat>('mobile')
   const [reportTemplateId, setReportTemplateId] = useState(defaultReportTemplates[0].id)
   const [appVersion, setAppVersion] = useState('0.1.0')
-  const [appPlatform, setAppPlatform] = useState('')
   const searchRef = useRef<HTMLInputElement>(null)
   const chatScrollRef = useRef<HTMLDivElement>(null)
-  const profileCitationRef = useRef<ChatIndexSearchMatch | null>(null)
   const chatContentRef = useRef<HTMLDivElement>(null)
   const followChatBottom = useRef(true)
   const previousChatScrollTop = useRef(0)
@@ -890,6 +888,30 @@ export default function App() {
   const currentConversationKey = useRef('')
   const conversationSummaryKey = JSON.stringify([real?.account.root ?? rootDir, selected?.id])
   currentConversationKey.current = conversationSummaryKey
+  const mediaRoot = real?.account.root
+  const mediaConversationId = selected?.id
+  const hasPendingImages = selected?.messages.some(({ image }) => image && !image.source && !image.unavailable)
+  const mediaSyncedAt = real?.syncedAt
+  useEffect(() => {
+    if (!entered || view !== 'messages' || !mediaRoot || !mediaConversationId || !hasPendingImages) return
+    let active = true
+    void window.wetrace.getIndexedConversation({ root: mediaRoot, conversationId: mediaConversationId, limit: 60, refresh: true }).then(response => {
+      if (!active || !response.ok) return
+      const images = new Map(response.conversation.messages.filter(message => message.image)
+        .map(message => [`${message.createdAt}:${message.id}`, message.image]))
+      setReal(current => {
+        if (current?.account.root !== mediaRoot || current.syncedAt !== mediaSyncedAt) return current
+        return { ...current, conversations: current.conversations.map(conversation => conversation.id !== mediaConversationId ? conversation : {
+          ...conversation, messages: conversation.messages.map(message => {
+            if (!message.image || message.image.source || message.image.unavailable) return message
+            const image = images.get(`${message.createdAt}:${message.id}`)
+            return { ...message, image: image ?? { ...message.image, unavailable: '图片暂未读取到，请刷新聊天记录重试' } }
+          })
+        }) }
+      })
+    }).catch(() => undefined)
+    return () => { active = false }
+  }, [entered, view, mediaRoot, mediaConversationId, mediaSyncedAt, hasPendingImages])
   useEffect(() => {
     if (!entered || view !== 'messages' || !selected) return
     let active = true
@@ -1018,7 +1040,7 @@ export default function App() {
   }, [toast])
 
   useEffect(() => {
-    void window.wetrace?.getAppInfo().then((info) => { setAppVersion(info.version); setAppPlatform(info.platform) }).catch(() => undefined)
+    void window.wetrace?.getAppInfo().then((info) => setAppVersion(info.version)).catch(() => undefined)
     void window.wetrace?.listWechatAccounts(rootDir ?? undefined).then(setAccounts).catch(() => undefined)
     void window.wetrace?.getCacheSize().then(setCacheBytes).catch(() => undefined)
     void window.wetrace?.getCacheDirectory?.().then(setCacheDirectory).catch(() => notify('读取缓存目录失败'))
@@ -1328,19 +1350,6 @@ export default function App() {
     if (view === 'messages' && element && followChatBottom.current && !historyRequest.current) element.scrollTop = element.scrollHeight
   }, [view, selected?.messages])
 
-  useLayoutEffect(() => {
-    const citation = profileCitationRef.current
-    const element = chatScrollRef.current
-    if (view !== 'messages' || !citation || !element || citation.conversationId !== selected?.id) return
-    profileCitationRef.current = null
-    const row = Array.from(element.querySelectorAll<HTMLElement>('[data-message-id]')).find(item =>
-      item.dataset.messageId === citation.id && Number(item.dataset.messageTime) === citation.createdAt)
-    if (row) {
-      followChatBottom.current = false
-      row.scrollIntoView({ block: 'nearest' })
-      previousChatScrollTop.current = element.scrollTop
-    }
-  }, [view, selected?.id, selected?.messages])
 
   async function selectDirectory() {
     try {
@@ -1394,19 +1403,12 @@ export default function App() {
     setLoginStep(detected?.hasKey ? 3 : 1)
   }
 
-  async function openIndexedSearchMatch(match: ChatIndexSearchMatch, requireExact = false) {
+  async function openIndexedSearchMatch(match: ChatIndexSearchMatch) {
     const root = real?.account.root ?? rootDir ?? undefined
     const generation = syncGeneration.current
     const response = await window.wetrace.getIndexedConversation({ root, conversationId: match.conversationId, at: match.createdAt })
     if (!response.ok) throw new Error(response.error)
-    if (generation !== syncGeneration.current) {
-      if (requireExact) throw new Error('当前账号已切换')
-      return
-    }
-    if (requireExact && (!real || real.account.root !== root || !response.conversation.messages.some(message => message.id === match.id && message.createdAt === match.createdAt))) {
-      throw new Error('该条消息在当前聊天记录中不可用')
-    }
-    if (requireExact) profileCitationRef.current = match
+    if (generation !== syncGeneration.current) return
     if (root) indexedConversationRef.current = { root, conversation: response.conversation, at: match.createdAt }
     setReal(current => current && current.account.root === root ? { ...current, monitorWarning: response.conversation.captureWarning ?? current.monitorWarning, conversations: [response.conversation, ...current.conversations.filter(item => item.id !== response.conversation.id)] } : current)
     setQuery('')
@@ -1481,7 +1483,16 @@ export default function App() {
     if (real?.account.root === data.account.root) {
       const previous = new Map(real.conversations.map(conversation => [conversation.id, conversation]))
       data = { ...data, account: { ...data.account, avatar: data.account.avatar || real.account.avatar },
-        conversations: data.conversations.map(conversation => preserveConversationAvatars(conversation, previous.get(conversation.id))) }
+        conversations: data.conversations.map(conversation => {
+          const prior = previous.get(conversation.id)
+          const images = new Map(prior?.messages.filter(message => message.image?.source)
+            .map(message => [`${message.createdAt}:${message.id}`, message.image]))
+          return preserveConversationAvatars({ ...conversation, messages: conversation.messages.map(message => {
+            if (!message.image || message.image.source || message.image.unavailable) return message
+            const image = images.get(`${message.createdAt}:${message.id}`)
+            return image ? { ...message, image } : message
+          }) }, prior)
+        }) }
     }
     if (!data.conversations.length) {
       setSyncError('没有读取到可用的会话，请确认微信已登录并同步过消息。')
@@ -1867,11 +1878,7 @@ export default function App() {
 
       <div className="workspace">
         <Profiles key={`profiles:${rootDir ?? account?.root ?? ''}`} root={rootDir ?? account?.root}
-          visible={view === 'profiles'} recentConversations={real?.account.root === (rootDir ?? account?.root) ? real?.conversations : undefined}
-          onOpenMessage={async (conversationId, message) => {
-            await openIndexedSearchMatch({ conversationId, conversationName: '', id: message.id, createdAt: message.createdAt, text: message.text }, true)
-            setView('messages')
-          }} />
+          visible={view === 'profiles'} recentConversations={real?.account.root === (rootDir ?? account?.root) ? real?.conversations : undefined} />
         {real?.account.root && <ScheduledMessagesPanel key={'send-' + real.account.root} root={real.account.root} visible={view === 'send'} />}
         {real?.account.root && <GroupMonitor conversations={real.conversations} key={real.account.root} root={real.account.root} visible={view === 'monitor'} onStateChange={(root, state) => setMonitorData({ root, state })} />}
         <div style={{ display: view === 'ai' ? 'contents' : 'none' }}><AiChat key={real?.account.root ?? 'none'} root={real?.account.root} conversations={real?.conversations ?? []} models={modelConfigs} launch={aiLaunch} onSettings={() => openSettings('model')} /></div>
@@ -2337,18 +2344,6 @@ export default function App() {
                 {settingsPanel === 'asr' && (
                   <div className="panel active">
                     <h2>语音转文字</h2>
-                    <p className="desc">使用固定的本地离线模型，暂不支持在线服务或自定义模型配置。下载模型不会自动处理聊天语音。</p>
-                    <div className="asr-privacy">
-                      <span className="asr-privacy-icon"><ShieldCheck size={18} /></span>
-                      <div><b>本地模型，隐私优先</b><p>语音在本机识别，无需上传；成功转写会缓存，报告重试时自动复用。</p></div>
-                    </div>
-                    <div className="group asr-runtime">
-                      <Field title="当前平台" hint="当前应用运行环境"><span className="kv">{appPlatform === 'darwin' ? 'macOS' : appPlatform === 'win32' ? 'Windows' : appPlatform === 'linux' ? 'Linux' : appPlatform || '读取中…'}</span></Field>
-                      <Field title="离线识别能力" hint="固定使用本地模型"><span className="kv">模型文件管理<small>已接入 SenseVoice 离线识别</small></span></Field>
-                      <Field title="识别引擎" hint="不会根据目录名称伪造引擎状态"><span className="kv">待接入</span></Field>
-                    </div>
-
-                    <div className="asr-section-head"><div><h3>本地语音模型</h3><p>下载并校验模型文件，无需配置。</p></div></div>
                     <article className="asr-model-card asr-recommended-model">
                       <div className="asr-model-top">
                         <span className="asr-model-icon"><Mic size={17} /></span>
@@ -2356,8 +2351,8 @@ export default function App() {
                         <span className={voiceModelStatus?.state === 'ready' ? 'asr-configured' : 'asr-download-state'}>{voiceModelStatus?.state === 'ready' && <Check size={12} />}{voiceModelStateText}</span>
                       </div>
                       <div className="asr-model-path"><span>下载目录</span><code title={voiceModelStatus?.directory}><SafeText>{voiceModelStatus?.directory ?? '读取中…'}</SafeText></code></div>
-                      {voiceModelStatus && (voiceModelStatus.state === 'downloading' || voiceModelStatus.downloadedBytes > 0) && <div className="asr-download-progress" aria-live="polite">
-                        <div className="asr-download-meta"><span>{voiceModelStatus.state === 'ready' ? '下载与校验完成' : `已下载 ${voiceModelPercent}%`}</span><span>{formatBytes(voiceModelStatus.downloadedBytes)} / {formatBytes(voiceModelStatus.totalBytes)}</span></div>
+                      {voiceModelStatus && voiceModelStatus.state !== 'ready' && (voiceModelStatus.state === 'downloading' || voiceModelStatus.downloadedBytes > 0) && <div className="asr-download-progress" aria-live="polite">
+                        <div className="asr-download-meta"><span>已下载 {voiceModelPercent}%</span><span>{formatBytes(voiceModelStatus.downloadedBytes)} / {formatBytes(voiceModelStatus.totalBytes)}</span></div>
                         <div className="asr-download-track" role="progressbar" aria-label="语音模型下载进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={voiceModelPercent}><span style={{ width: `${voiceModelPercent}%` }} /></div>
                       </div>}
                       {voiceModelStatus?.error && <p className="asr-download-error">{voiceModelStatus.error}</p>}

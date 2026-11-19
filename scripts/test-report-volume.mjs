@@ -11,6 +11,23 @@ const messages = Array.from({ length: 9000 }, (_, index) => ({
   text: `针对方案${Math.floor(index / 750)}，本条补充具体问题、不同意见、处理过程和待验证结果。`.repeat(4),
 }))
 const facts = reportFacts(messages)
+const avatar = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lS8AAAAASUVORK5CYII='
+const first = { ...messages[1], text: '模拟发言' }
+const later = { ...first, id: 'later', avatar }
+const namesake = { ...first, id: 'namesake', senderId: 'another-member' }
+const avatarFacts = reportFacts([first, later, namesake])
+assert.equal(avatarFacts.members[0].avatar, avatar, '首条消息没有头像时使用后续消息中的头像')
+const avatarHtml = renderReportFeed({
+  hero: { summary: '同名成员测试' },
+  importantMessages: [{ content: first.text, sourceMessageIds: ['r1'] }],
+}, {
+  ...avatarFacts, name: '模拟群', startDate: '2026-10-29', endDate: '2026-10-29',
+  messageCount: 3, width: 430, warnings: [],
+  messageAuthors: [{ reference: 'r1', key: `id:${first.senderId}` }],
+  sourceMessages: [{ ...first, reference: 'r1' }],
+})
+assert.ok(avatarHtml.includes(`class="important-card"><img class="avatar" src="${avatar}"`), '同名成员的重点消息按原文作者取头像')
+assert.ok(avatarHtml.includes(`class="rank"><img class="avatar" src="${avatar}"`), '发言排行按成员身份取头像')
 const policy = reportFeedPolicy(messages.length, '2026-10-29', '2026-10-30', 'default')
 assert.equal(policy.full, true)
 assert.equal(policy.maxTopics, 12)

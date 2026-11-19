@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, readdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { selectProfileClips } from '../src/main/profile-evidence.ts'
 import { ChatIndex } from '../src/main/chat-index.ts'
 const directory = mkdtempSync(join(tmpdir(), 'wetrace-all-index-'))
 let index
@@ -62,22 +61,10 @@ try {
   assert.equal(decrypted - selectedDecrypted, 1, '精确选择只解密一条原文，重复引用不重复读取')
   assert.equal(index.selectedReportMessages('room-b', [{ id: '2', createdAt: 1700000002000 }]).length, 0, '精确选择限制在指定会话')
   const day = 86_400_000
-  const profileEnd = 1700000002500
-  const profileWindow = index.profileWindows('room-a', 'alice').buckets.flat()
-  assert.deepEqual(profileWindow.map(item => item.anchor.id), ['1'])
-  assert.deepEqual(profileWindow[0].following.map(item => item.sender), ['me'])
-  assert.equal(index.profileWindows('room-b', 'alice').buckets.flat().length, 0)
-  const clip = (id, createdAt, text) => {
-    const anchor = { id, createdAt, text, target:true, speaker:0 }
-    return { anchor, messages:[anchor] }
-  }
-  const duplicate = '我建议先确认预算再准备报价'
-  const clips = selectProfileClips([
-    [clip('first', profileEnd - day, duplicate), clip('same-incident', profileEnd - day - 1000, '其他补充说明')],
-    [clip('same-text', profileEnd - 8 * day, duplicate), clip('second', profileEnd - 9 * day, '我来写文档，周五之前交付')],
-    [clip('third', profileEnd - 24 * day, '这周末我会去看展')],
-  ])
-  assert.deepEqual(clips.map(item => item.anchor.id), ['first', 'second', 'third'])
+  const profilePage = index.profileMessagePage('room-a', 'alice', {}, 1)
+  assert.deepEqual(profilePage.rows.map(item => item.anchor.id), ['1'])
+  assert.equal(profilePage.snapshot.count, 1)
+  assert.equal(index.profileMessagePage('room-b', 'alice').rows.length, 0)
   assert.equal(index.status().messages, 3)
   assert.equal(index.status().conversations, 2)
   assert.equal(index.isFresh('v1'), true)
@@ -113,11 +100,15 @@ try {
   messages.get('store-a').push({ ...row(5), createTime: recentTime })
   version = 'v5'
   await index.start(source)
-  const allHistory = index.profileWindows('room-a', 'alice')
-  assert.equal(allHistory.from, originalTime * 1000)
-  assert.equal(allHistory.to, recentTime * 1000)
-  assert.ok(allHistory.buckets.flat().some(item => item.anchor.id === '3'), '超过 90 天的最早记录仍可参与画像')
-  assert.ok(allHistory.buckets.flat().some(item => item.anchor.id === '5'), '最新记录仍可参与画像')
+  const allHistory = index.profileMessagePage('room-a', 'alice', {}, 1)
+  assert.equal(allHistory.snapshot.from, originalTime * 1000)
+  assert.equal(allHistory.snapshot.to, recentTime * 1000)
+  assert.equal(allHistory.snapshot.count, 3)
+  assert.deepEqual(allHistory.rows.map(item => item.anchor.id), ['3'])
+  const latest = index.profileMessagePage('room-a', 'alice', {
+    after: allHistory.next, through: allHistory.snapshot.through,
+  }, 2)
+  assert.deepEqual(latest.rows.map(item => item.anchor.id), ['4', '5'])
   index.close(); index = undefined
   for (const file of readdirSync(directory)) assert.equal(readFileSync(join(directory, file)).includes(Buffer.from('PRIVATE_MESSAGE_CONTENT')), false)
   console.log('全量聊天索引测试通过：跨会话持久化、增量追加、删除重建、成员统计、重启复用、暂停继续、加密与源变化校验。')

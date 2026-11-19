@@ -174,8 +174,8 @@ export function runReportParticipantProfiles(account: WechatAccount, key: string
   return request<ReportParticipant[]>({ type: 'report-participants', account, key, participants })
 }
 
-export function runProfileEvidence(account: WechatAccount, key: string, conversationId: string, memberId: string): Promise<Omit<import('../shared/person-profile').PersonProfile, 'observations'>> {
-  return request({ type: 'profile-evidence', account, key, conversationId, memberId }, 'statistics')
+export function runProfileEvidence(account: WechatAccount, key: string, conversationId: string, memberId: string, query: import('../shared/person-profile').ProfilePageQuery): Promise<import('../shared/person-profile').ProfileMessagePage> {
+  return request({ type: 'profile-evidence', account, key, conversationId, memberId, query }, 'statistics')
 }
 
 export function runGroupMembers(account: WechatAccount, key: string, conversationId: string): Promise<import('../shared/types').GroupMember[]> {

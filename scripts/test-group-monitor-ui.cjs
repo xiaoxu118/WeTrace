@@ -26,9 +26,22 @@ app.whenReady().then(async () => {
  const profileTime=Date.now();
  const profileMessage={id:'profile-message',createdAt:profileTime,target:true,speaker:0,text:'先确认测试范围，再安排复查。'};
  api.profileRequests=async()=>profileRequests;
+ let savedProfile;
+ let releaseProfile;
+ api.finishProfile=error=>releaseProfile?.(error);
+ api.cancelAi=()=>releaseProfile?.('cancelled');
+ api.listPersonProfiles=async()=>({ok:true,records:savedProfile?[savedProfile]:[]});
+ api.editPersonProfile=async input=>{
+  const observations=Object.entries(input.sections).flatMap(([category,detail])=>detail?[{category,detail,references:[]}]:[]);
+  savedProfile={...savedProfile,name:input.name.trim()||savedProfile.name,revision:'updated',profile:{...savedProfile.profile,observations}};
+  return {ok:true,record:savedProfile};
+ };
  api.generatePersonProfile=async input=>{
   profileRequests.push(input);
-  return {ok:true,profile:{from:profileTime-86400000,to:profileTime,evidence:[{anchor:profileMessage,messages:[profileMessage]}],observations:[{title:'先确认范围',detail:'讨论复查时先确认测试范围。',references:[1]}]}};
+  const error=await new Promise(resolve=>{ releaseProfile=resolve; });
+  if(error) return {ok:false,error:error==='cancelled'?'已停止生成':error,cancelled:error==='cancelled'};
+  savedProfile={id:'profile',revision:'created',target:input.target,name:input.name,groupName:input.groupName,updatedAt:Date.now(),profile:{from:profileTime-86400000,to:profileTime,evidence:[{anchor:profileMessage,messages:[profileMessage]}],observations:[{title:'先确认范围',detail:'讨论复查时先确认测试范围。',references:[1]},{category:'其他',detail:'随后安排复查。',references:[1]},{category:'基础信息',title:'自我介绍',detail:'本人使用小明作为昵称。',references:[]}]}};
+  return {ok:true,record:savedProfile};
  };
  api.getIndexedConversation=async query=>query.conversationId!=='watch@chatroom'||query.at!==profileTime
   ? {ok:false,error:'测试消息不匹配'}
@@ -95,21 +108,82 @@ app.whenReady().then(async () => {
   await run(`[...document.querySelectorAll('.profiles-view .ant-segmented-item')].find(item => item.textContent === '群成员').click()`)
   await click('.profiles-view .ant-select')
   await click('.profile-select-popup:not(.ant-select-dropdown-hidden) [title="产品讨论群"]')
-  await until(`document.querySelectorAll('.profiles-view .ant-select').length === 2`)
+  await until(`document.querySelectorAll('.profiles-view .profile-select .ant-select').length === 2`)
   await until(`!document.querySelector('.profiles-view .ant-select-loading')`)
   await click('.profile-select + .profile-select .ant-select')
   await click('.profile-select-popup:not(.ant-select-dropdown-hidden) [title="同名成员（2）"]')
   await until(`!document.querySelector('.profiles-view .btn.primary').disabled && document.querySelector('.profiles-view').textContent.includes('同名成员（2）')`)
+  const listPosition = await run(`document.querySelector('.profile-list').getBoundingClientRect().top`)
   await click('.profiles-view .btn.primary')
-  await until(`document.querySelector('.profile-observations')?.textContent.includes('先确认范围')`)
+  await until(`!!document.querySelector('.profile-job-status [role="status"]')`)
+  assert.ok(await run(`document.querySelector('.profiles-view .btn.primary').disabled`))
+  assert.ok(await run(`document.querySelector('.profile-job-status').textContent.includes('正在更新画像')`))
+  assert.equal(await run(`getComputedStyle(document.querySelector('.profile-job-status')).position`), 'fixed')
+  assert.equal(await run(`document.querySelector('.profile-list').getBoundingClientRect().top`), listPosition)
+  await until(`window.wetrace.profileRequests().then(items=>items.length===1)`)
+  await run('window.wetrace.finishProfile()')
+  await until(`document.querySelector('.profile-list')?.textContent.includes('同名成员（2）')`)
+  await until(`document.querySelector('.profile-job-status[data-status="saved"]')?.textContent.includes('画像已保存')`)
+  await click('.profile-job-status button')
+  await until(`!document.querySelector('.profile-job-status')`)
   const [profileRequest] = await run('window.wetrace.profileRequests()')
   assert.deepEqual(profileRequest.target, {kind:'group-member',root:'/test',groupId:'watch@chatroom',memberId:'private-member-2'})
-  await click('.profile-observations button')
-  await until(`document.querySelector('.ant-modal')?.textContent.includes('先确认测试范围，再安排复查。')`)
-  await click('.ant-modal-footer button')
-  await until(`!!document.querySelector('[data-message-id="profile-message"]')`)
-  await click('button[aria-label="画像"]')
-  await until(`document.querySelector('.profile-observations')?.textContent.includes('先确认范围')`)
+  assert.deepEqual(await run(`[...document.querySelectorAll('.profile-list thead th')].map(item => item.textContent)`),
+    ['人物', '来源', '基础信息', '更新时间', '操作'])
+  assert.ok(await run(`document.querySelector('.profile-list tbody').textContent.includes('本人使用小明作为昵称。')`))
+  assert.equal(await run(`document.querySelectorAll('.profile-list tbody tr[data-row-key]').length`), 1)
+  const searchProfiles = value => run(`(() => {
+    const input = document.querySelector('[aria-label="搜索画像"]')
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(value)})
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })()`)
+  await searchProfiles('不存在的内容')
+  await until(`document.querySelector('.profile-list')?.textContent.includes('没有匹配的画像')`)
+  await searchProfiles('讨论复查')
+  await until(`document.querySelectorAll('.profile-list tbody tr[data-row-key]').length === 1`)
+  await searchProfiles('')
+  assert.equal(await run(`!!document.querySelector('.profile-list-toolbar .ant-select')`), false)
+  await click('.profile-list button[aria-label^="查看画像"]')
+  await until(`document.querySelector('.profile-editor .profile-observations')?.textContent.includes('讨论复查时先确认测试范围。')`)
+  assert.equal(await run(`document.querySelector('.profile-observations').textContent.includes('先确认范围')`), false)
+  assert.deepEqual(await run(`[...document.querySelectorAll('.profile-category h5')].map(item => item.textContent)`), ['基础信息', '其他'])
+  assert.equal(await run(`!!document.querySelector('.profiles-view .profile-observations')`), false)
+  assert.equal(await run(`document.querySelectorAll('.profile-category .ant-card').length`), 2)
+  assert.equal(await run(`document.querySelector('.profile-observations').textContent.includes('聊天证据')`), false)
+  await click('.profile-editor-actions .ant-btn-primary')
+  await until(`!!document.querySelector('.profile-editor input')`)
+  assert.deepEqual(await run(`[...document.querySelectorAll('.profile-editor legend')].map(item => item.textContent)`), ['基础信息', '性格与行为', '兴趣爱好', '其他'])
+  assert.equal(await run(`document.querySelectorAll('.profile-editor textarea').length`), 4)
+  assert.deepEqual(await run(`document.querySelector('textarea[aria-label="其他"]').value.split(/\\n+/)`),
+    ['讨论复查时先确认测试范围。', '随后安排复查。'])
+  assert.equal(await run(`!!document.querySelector('.profile-editor .ant-select')`), false)
+  await new Promise(resolve=>setTimeout(resolve,350))
+  await fs.mkdir('.screenshots',{recursive:true})
+  await fs.writeFile('.screenshots/profile-editor.png',(await window.webContents.capturePage()).toPNG())
+  await run(`(() => {
+    const input = document.querySelector('.profile-editor input')
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '已编辑的画像')
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    const detail = document.querySelector('.profile-editor textarea')
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(detail, '编辑后的观察正文。')
+    detail.dispatchEvent(new Event('input', { bubbles: true }))
+  })()`)
+  await click('.profile-editor-actions .ant-btn-primary')
+  await until(`document.querySelector('.profile-list')?.textContent.includes('已编辑的画像')`)
+  await until(`document.querySelector('.profile-observations')?.textContent.includes('编辑后的观察正文。')`)
+  await click('.profile-editor-actions .ant-btn-primary')
+  await until(`document.querySelectorAll('.profile-editor textarea').length === 4`)
+  await run(`(() => {
+    for (const input of document.querySelectorAll('.profile-editor input, .profile-editor textarea')) {
+      Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), 'value').set.call(input, '')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+  })()`)
+  await click('.profile-editor-actions .ant-btn-primary')
+  await until(`!!document.querySelector('.profile-observations') && !document.querySelector('.profile-section-text')`)
+  assert.ok(await run(`document.querySelector('.profile-list').textContent.includes('已编辑的画像')`))
+  await click('.profile-editor-actions button:first-child')
+  await until(`!document.querySelector('.profile-editor .profile-observations')`)
   await click('.profiles-view .ant-select')
   await click('.profile-select-popup:not(.ant-select-dropdown-hidden) [title="历史项目群"]')
   await until(`document.querySelector('.profiles-view .ant-alert')?.textContent.includes('测试群成员读取失败') && document.querySelector('.profiles-view .btn.primary').disabled`)
@@ -119,6 +193,15 @@ app.whenReady().then(async () => {
   await click('.profile-select + .profile-select .ant-select')
   await click('.profile-select-popup:not(.ant-select-dropdown-hidden) [title="另一群的成员"]')
   await until(`!document.querySelector('.profiles-view .btn.primary').disabled`)
+  await click('.profiles-view .btn.primary')
+  await until(`window.wetrace.profileRequests().then(items=>items.length===2)`)
+  await click('.profile-job-status button')
+  await until(`document.querySelector('.profile-job-status[data-status="cancelled"]')?.textContent.includes('画像更新已取消')`)
+  await click('.profiles-view .btn.primary')
+  await until(`window.wetrace.profileRequests().then(items=>items.length===3)`)
+  await run(`window.wetrace.finishProfile('测试模型请求失败')`)
+  await until(`document.querySelector('.profile-job-status [role="alert"]')?.textContent.includes('测试模型请求失败')`)
+  await click('.profile-job-status button')
   for (const tab of ['消息', '群聊监控', '设置']) {
    await run(`document.querySelector('button[aria-label="画像"]').click()`)
    await until(`!!document.querySelector('.profiles-view')`)

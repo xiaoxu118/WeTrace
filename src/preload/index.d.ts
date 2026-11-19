@@ -13,6 +13,8 @@ declare global {
       resolveSticker(query: import('../shared/sticker').StickerQuery): Promise<import('../shared/sticker').StickerResponse>
       groupMonitor(query: import('../shared/group-monitor').MonitorQuery): Promise<import('../shared/group-monitor').MonitorResponse>
       generatePersonProfile(input: import('../shared/person-profile').GeneratePersonProfileInput): Promise<import('../shared/person-profile').PersonProfileResponse>
+      listPersonProfiles(root: string): Promise<import('../shared/person-profile').ListPersonProfilesResponse>
+      editPersonProfile(input: import('../shared/person-profile').EditPersonProfileInput): Promise<import('../shared/person-profile').PersonProfileResponse>
       listGroupMembers(query: ConversationIndexQuery): Promise<import('../shared/types').GroupMembersResponse>
       listConversationOptions(root?: string, textOnly?: boolean): Promise<import('../shared/types').ConversationOptionsResponse>
       loadAiPrompts(): Promise<import('../shared/ai-prompt-settings').AiPromptSettingsResponse>

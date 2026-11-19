@@ -11,13 +11,19 @@ app.whenReady().then(async () => {
   source = source.replace("contextBridge.exposeInMainWorld('wetrace', api)", `
 const messages = Array.from({length:185}, (_,i)=>({id:String(i+1),createdAt:(i+1)*1000,messageType:1,from:'them',avatar:'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%221%22 height=%221%22/%3E',text:'历史消息 '+(i+1),time:'12:00'}))
 data.conversations = [{...data.conversations[0],id:'friend',type:'friend',name:'测试联系人',records:'60',messages:messages.slice(-60)}]
+const imageMessage = {id:'image',createdAt:1000,messageType:3,from:'them',text:'[图片]',time:'12:00',image:{hashes:[]}}
+const imageConversation = {...data.conversations[0],id:'image-friend',name:'图片联系人',messages:[imageMessage]}
+data.conversations.push(imageConversation)
 api.onAiProgress = () => () => {}
 const queries = []; let fail = true
 api.queryConversationSummary = async () => ({ok:true,data:{total:messages.length,firstAt:1000,lastAt:messages.length*1000}})
-api.getIndexedConversation = async query => { queries.push(query); if(fail){fail=false;return {ok:false,error:'模拟失败，请重试'}};return {ok:true,conversation:{...data.conversations[0],records:'185',messages:messages.slice(-query.limit).map(({avatar,...message})=>message)}} }
+api.getIndexedConversation = async query => {
+  if (query.conversationId === imageConversation.id) return {ok:true,conversation:{...imageConversation,messages:[{...imageMessage,image:{source:messages[0].avatar}}]}}
+  queries.push(query); if(fail){fail=false;return {ok:false,error:'模拟失败，请重试'}};return {ok:true,conversation:{...data.conversations[0],records:'185',messages:messages.slice(-query.limit).map(({avatar,...message})=>message)}}
+}
 let changed = () => {}; let refreshes = 0; let holdNext=false; let releaseHeld
 api.onDatabaseChanged = callback => { changed = callback; return () => {} }
-api.syncWechat = async () => { refreshes++; const response={ok:true,data:{...data,conversations:[{...data.conversations[0],messages:messages.slice(-60)}],syncedAt:new Date().toISOString()}};if(holdNext){holdNext=false;await new Promise(resolve=>{releaseHeld=resolve})}return response }
+api.syncWechat = async () => { refreshes++; const response={ok:true,data:{...data,conversations:[{...data.conversations[0],messages:messages.slice(-60)},imageConversation],syncedAt:new Date().toISOString()}};if(holdNext){holdNext=false;await new Promise(resolve=>{releaseHeld=resolve})}return response }
 api.appendHistoryFixture = async () => { const id=String(messages.length+1);messages.push({id,createdAt:Number(id)*1000,messageType:1,from:'them',text:'新到消息 '+id,time:'12:01'});changed('/test') }
 api.beginHeldOriginal = async () => {holdNext=true;const id=String(messages.length+1);messages.push({id,createdAt:Number(id)*1000,messageType:1,from:'me',text:'快速发送测试原文',time:'12:02'});changed('/test')}
 api.recallHeldOriginal = async () => {const old=messages.at(-1);messages[messages.length-1]={...old,messageType:10000,text:'你撤回了一条消息',revoke:{}};changed('/test')}
@@ -94,6 +100,14 @@ contextBridge.exposeInMainWorld('wetrace', api)
     await run('window.wetrace.releaseHeldSync()')
     await until(`document.querySelector('.chat-scroll-content .mrow:last-child').textContent.includes('你撤回了一条消息')`)
     assert.ok(await run('window.wetrace.historyRefreshes()')>=beforeRapid+2,'读取期间的撤回事件必须触发后续读取')
+    await run(`Array.from(document.querySelectorAll('.conv-list button')).find(button=>button.textContent.includes('图片联系人')).click()`)
+    const imageLoaded = `document.querySelector('.chat-scroll img[alt="聊天图片"]')?.naturalWidth === 1`
+    await until(imageLoaded)
+    const beforeImageRefresh = await run('window.wetrace.historyRefreshes()')
+    await run('window.wetrace.refreshHistoryFixture()')
+    await until(`window.wetrace.historyRefreshes().then(n=>n>${beforeImageRefresh})`)
+    await run(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`)
+    assert.ok(await run(imageLoaded), '自动同步后仍显示已读取的聊天图片')
     console.log('快速撤回刷新通过：首次事件立即读取，读取期间的新事件不丢失。')
     console.log('新消息滚动通过：底部自动跟随、延迟内容增高继续跟随、阅读历史不跳动、滚回底部恢复跟随。')
     console.log('消息页定位通过：离开后返回同一会话，自动定位到最后一条消息。')

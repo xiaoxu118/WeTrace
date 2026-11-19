@@ -272,9 +272,15 @@ function messageContent(row: Record<string, unknown>): string {
   ]))
 }
 
+interface ContactProfile {
+  nickname?: string
+  avatar?: string
+  isVerifiedAccount?: boolean
+}
+
 export class Wcdb4Client {
   private handle: number | null = null
-  private profiles = new Map<string, { at: number; nickname?: string; avatar?: string }>()
+  private profiles = new Map<string, ContactProfile & { at: number }>()
   private displayNames = new Map<string, { at: number; name: string }>()
   private groupMembers = new Map<string, { at: number; ids: string[] }>()
   private groupNames = new Map<string, { at: number; names: Map<string, string> }>()
@@ -374,19 +380,59 @@ export class Wcdb4Client {
     return new Map(requested.map(id => [id, this.displayNames.get(id)?.name || id]))
   }
 
-  getProfiles(usernames: string[]): Map<string, { nickname?: string; avatar?: string }> {
+  getPersonalContactNames(usernames: string[]): Map<string, string> {
+    if (!usernames.length) return new Map()
+    const rows = this.callJson<unknown>((handle, output) =>
+      bindings().getDisplayNames(handle, JSON.stringify(usernames), output))
+    const names = readStringMap(rows, ['remark', 'nick_name', 'nickname', 'nickName', 'displayName', 'display_name', 'name'])
+    const metadata = new Map<string, Record<string, unknown>>()
+    if (Array.isArray(rows)) {
+      for (const row of rows) {
+        if (!row || typeof row !== 'object' || Array.isArray(row)) continue
+        const id = text(row, ['username', 'userName', 'user_name', 'm_nsUsrName', 'wxid'])
+        if (id) metadata.set(id, row)
+      }
+    }
+    const systemAccounts = new Set(['weixin', 'filehelper', 'fmessage', 'medianote', 'newsapp',
+      'brandsessionholder', 'notification_messages', 'officialaccounts', 'notifymessage',
+      'weixinreminder', 'weixinteam', 'mphelper', 'gh_', 'floatbottle', 'qqmail', 'tmessage'])
+    const contacts = new Map<string, string>()
+    for (const id of usernames) {
+      const normalized = id.toLowerCase()
+      if (normalized.startsWith('gh_') || normalized.includes('@') || systemAccounts.has(normalized)) continue
+      const row = metadata.get(id)
+      const verify = row?.verify_flag ?? row?.verifyFlag ?? row?.VerifyFlag
+      const deleted = row?.delete_flag ?? row?.deleteFlag ?? row?.DelFlag
+      if ((verify != null && Number(verify) !== 0) || (deleted != null && Number(deleted) !== 0)) continue
+      const flag = row?.flag ?? row?.Flag
+      if (flag != null ? (Number(flag) & 3) === 0 : !normalized.startsWith('wxid_')) continue
+      contacts.set(id, names.get(id) || id)
+    }
+    return contacts
+  }
+
+  getProfiles(usernames: string[]): Map<string, ContactProfile> {
     const normalized = [...new Set(usernames.map((username) => username.trim()).filter(Boolean))]
     const now = Date.now()
     const pending = normalized.filter(id => now - (this.profiles.get(id)?.at ?? 0) >= 60000)
     const names = new Map<string, string>()
     const avatars = new Map<string, string>()
     if (!normalized.length) return new Map()
-    if (!pending.length) return new Map(normalized.map(id => { const profile = this.profiles.get(id)!; return [id, { nickname: profile.nickname, avatar: profile.avatar }] }))
+    if (!pending.length) return new Map(normalized.map(id => { const { nickname, avatar, isVerifiedAccount } = this.profiles.get(id)!; return [id, { nickname, avatar, isVerifiedAccount }] }))
+    const verifiedAccounts = new Map<string, boolean>()
 
     try {
       const rows = this.callJson<unknown>((handle, output) =>
         bindings().getDisplayNames(handle, JSON.stringify(pending), output)
       )
+      if (Array.isArray(rows)) {
+        for (const row of rows) {
+          if (!row || typeof row !== 'object' || Array.isArray(row)) continue
+          const id = text(row, ['username', 'userName', 'user_name', 'm_nsUsrName', 'wxid'])
+          const verify = row.verify_flag ?? row.verifyFlag ?? row.VerifyFlag
+          if (id && verify != null) verifiedAccounts.set(id, Number(verify) > 0)
+        }
+      }
       readStringMap(rows, [
         'remark',
         'nick_name',
@@ -434,10 +480,11 @@ export class Wcdb4Client {
     for (const id of pending) {
       const old = this.profiles.get(id)
       this.profiles.set(id, { at: names.has(id) || avatars.has(id) ? now : now - 55000,
-        nickname: names.get(id) || old?.nickname, avatar: avatars.get(id) || old?.avatar })
+        nickname: names.get(id) || old?.nickname, avatar: avatars.get(id) || old?.avatar,
+        isVerifiedAccount: verifiedAccounts.get(id) ?? old?.isVerifiedAccount })
     }
     while (this.profiles.size > 10000) this.profiles.delete(this.profiles.keys().next().value!)
-    return new Map(normalized.map(id => { const profile = this.profiles.get(id); return [id, { nickname: profile?.nickname, avatar: profile?.avatar }] }))
+    return new Map(normalized.map(id => { const { nickname, avatar, isVerifiedAccount } = this.profiles.get(id) ?? {}; return [id, { nickname, avatar, isVerifiedAccount }] }))
   }
 
   getSelfProfile(): { nickname?: string; avatar?: string } {

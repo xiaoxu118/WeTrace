@@ -47,7 +47,7 @@ port.on('message', ({ data }: { data: RecordsCommand }) => {
       applyWechatCacheExclusions(chatDirectory(), data.account, data.key)
       send({ type: 'result', id: data.id })
     } else if (data.type === 'profile-evidence') {
-      send({ type: 'result', id: data.id, result: readWechatProfileEvidence(chatDirectory(), data.account, data.key, data.conversationId, data.memberId) })
+      send({ type: 'result', id: data.id, result: readWechatProfileEvidence(chatDirectory(), data.account, data.key, data.conversationId, data.memberId, data.query) })
     } else if (data.type === 'group-members') {
       send({ type: 'result', id: data.id, result: listWechatGroupMembers(data.account, data.key, data.conversationId) })
     } else if (data.type === 'conversation-options') {

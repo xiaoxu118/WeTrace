@@ -741,6 +741,42 @@ select:focus-visible {
   overflow: auto;
 }
 
+.profile-job-status {
+  position: fixed;
+  top: 20px;
+  right: 24px;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: min(360px, calc(100vw - 48px));
+  padding: 10px 12px 10px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 6px 20px #242b3814;
+}
+
+.profile-job-status button {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.profile-job-status-text {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  overflow-wrap: anywhere;
+}
+
+.profile-job-status[data-status="saved"] strong {
+  color: #237346;
+}
+
+.profile-job-status[data-status="failed"] strong {
+  color: #a33235;
+}
+
 .profile-select {
   position: relative;
   width: min(100%, 320px);
@@ -761,9 +797,143 @@ select:focus-visible {
   width: min(100%, 680px);
 }
 
-.profile-evidence-message .ant-typography {
+.profile-list {
+  width: min(100%, 1040px);
+  min-width: 0;
+}
+
+.profile-list h4.ant-typography {
+  margin: 0;
+  color: var(--ink);
+}
+
+.profile-list-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.profile-list-toolbar .ant-input-affix-wrapper {
+  width: min(252px, 100%);
+}
+
+.profile-category {
+  display: grid;
+  gap: 8px;
+}
+
+.profile-category h5.ant-typography {
+  margin: 0;
+}
+
+.profile-list .ant-table-wrapper {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.profile-list .ant-table-thead > tr > th {
+  background: #f6f8fb;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.profile-list .ant-table-thead > tr > th::before {
+  display: none;
+}
+
+.profile-list .ant-table-tbody > tr:last-child > td {
+  border-bottom: 0;
+}
+
+.profile-list .ant-table-tbody > tr.profile-row-active > td {
+  background: var(--accent-soft);
+}
+
+.profile-table-person {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.profile-table-person .ant-avatar {
+  flex: none;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.profile-table-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.profile-table-source,
+.profile-list time {
+  color: var(--ink-2);
+}
+
+.profile-editor .ant-drawer-body {
+  padding: clamp(16px, 4vw, 32px);
+  background: #f7f8fa;
+}
+
+.profile-editor-fields,
+.profile-editor-observation {
+  display: grid;
+  gap: 18px;
+}
+
+.profile-editor-observation {
+  min-width: 0;
+  margin: 0;
+  padding: 16px 20px 20px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.profile-editor-observation legend {
+  width: auto;
+  margin: 0;
+  padding: 0 6px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.profile-editor-field {
+  display: grid;
+  gap: 8px;
+  color: var(--ink-2);
+  font-weight: 500;
+}
+
+.profile-editor-field textarea {
+  line-height: 1.7;
+}
+
+.profile-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 6px 12px;
+}
+
+.profile-category .profile-section-text {
+  margin: 0;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+}
+
+.profile-category .ant-space + .profile-section-text {
+  margin-top: 12px;
 }
 
 /* 消息 */
@@ -2264,63 +2434,6 @@ select.inp {
   border: 1px dashed var(--line);
   border-radius: 12px;
   text-align: center;
-}
-
-.asr-privacy {
-  display: flex;
-  gap: 12px;
-  margin-top: 16px;
-  padding: 14px 16px;
-  border: 1px solid #d9e5fb;
-  border-radius: 12px;
-  background: #f3f7ff;
-}
-
-.asr-privacy-icon {
-  display: grid;
-  flex: 0 0 32px;
-  width: 32px;
-  height: 32px;
-  place-items: center;
-  border-radius: 9px;
-  background: #e2ebfc;
-  color: var(--accent);
-}
-
-.asr-privacy b {
-  color: #25456f;
-  font-size: 12.5px;
-  font-weight: 600;
-}
-
-.asr-privacy p {
-  margin-top: 3px;
-  color: #64748b;
-  font-size: 11.5px;
-  line-height: 1.65;
-}
-
-.asr-runtime {
-  margin-top: 12px;
-}
-
-.asr-section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-top: 24px;
-}
-
-.asr-section-head h3 {
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.asr-section-head p {
-  margin-top: 2px;
-  color: var(--muted-2);
-  font-size: 11px;
 }
 
 .asr-local-list {

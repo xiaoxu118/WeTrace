@@ -1,5 +1,6 @@
 import { generatePersonProfile } from './person-profile'
-import type { GeneratePersonProfileInput, PersonProfileResponse } from '../shared/person-profile'
+import type { EditPersonProfileInput, GeneratePersonProfileInput, ListPersonProfilesResponse, PersonProfileResponse } from '../shared/person-profile'
+import { PersonProfileStore } from './person-profile-store'
 import { previousStorage } from './storage-bootstrap'
 import { migrateLegacyStorage } from './storage-migration'
 import { reportDirectory } from './storage-paths'
@@ -336,6 +337,15 @@ app.whenReady().then(() => {
     const owner = sender.id
     sender.once('destroyed', () => aiJobs.cancelOwner(owner))
   }
+  const personProfiles = new PersonProfileStore(join(app.getPath('userData'), 'person-profiles.sqlite'))
+  ipcMain.handle('profile:list', (_event, root: string): ListPersonProfilesResponse => {
+    try { return { ok: true, records: personProfiles.list(root) } }
+    catch (error) { return { ok: false, error: error instanceof Error ? error.message : '读取画像列表失败' } }
+  })
+  ipcMain.handle('profile:edit', (_event, input: EditPersonProfileInput): PersonProfileResponse => {
+    try { return { ok: true, record: personProfiles.edit(input) } }
+    catch (error) { return { ok: false, error: error instanceof Error ? error.message : '保存画像失败' } }
+  })
   ipcMain.handle('profile:generate', async (event, input: GeneratePersonProfileInput): Promise<PersonProfileResponse> => {
     if (typeof input?.requestId !== 'string' || !input.requestId || !input.target) return { ok: false, error: '请选择画像对象' }
     const owner = event.sender.id
@@ -350,9 +360,12 @@ app.whenReady().then(() => {
       const profile = await generatePersonProfile(input.target, controller.signal, detail => {
         if (!event.sender.isDestroyed()) event.sender.send('ai:progress', { requestId: input.requestId, detail })
       })
-      return { ok: true, profile }
+      controller.signal.throwIfAborted()
+      if (!event.sender.isDestroyed()) event.sender.send('ai:progress', { requestId: input.requestId, detail: '正在保存画像…' })
+      return { ok: true, record: personProfiles.saveGenerated(input, profile) }
     } catch (error) {
-      return { ok: false, error: controller.signal.aborted ? '已停止生成' : error instanceof Error ? error.message : '更新画像失败' }
+      if (controller.signal.aborted) return { ok: false, error: '已停止生成', cancelled: true }
+      return { ok: false, error: error instanceof Error ? error.message : '更新画像失败' }
     } finally { aiJobs.finish(owner, input.requestId) }
   })
   ipcMain.handle('ai:cancel', (event, requestId: string) => { aiJobs.cancel(event.sender.id, requestId) })

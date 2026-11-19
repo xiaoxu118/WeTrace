@@ -14,6 +14,7 @@ export function reportFacts(messages: SyncMessage[]) {
     const key = reportMemberKey(message)
     if (!key) continue
     const member = members.get(key) ?? { key, id: message.senderId, name: reportMemberName(message), count: 0, avatar: message.avatar }
+    if (!member.avatar && message.avatar) member.avatar = message.avatar
     member.count++
     members.set(key, member)
   }

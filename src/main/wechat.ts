@@ -3,7 +3,8 @@ import { getCacheDirectory } from './cache-path'
 import { windowsNativeResources } from './native-resources'
 import { defaultWechatRoot, wechatPlatformSupport } from './wechat-platform'
 import { app } from 'electron'
-import { StickerResolver } from './sticker-resolver'
+import { imageMime } from './image-decryption'
+import { downloadWechatImage, StickerResolver } from './sticker-resolver'
 import type { ReportParticipant } from '../shared/report-facts'
 import type { ChatIndexSearchQuery, IndexedConversationQuery, ChatIndexSearchMatch, ChatIndexQuery, ChatIndexStatus } from '../shared/chat-index'
 import type { ConversationIndexQuery, ConversationIndexSummary, SpeechStatsQuery, SpeechStatsResult } from '../shared/types'
@@ -219,17 +220,38 @@ export async function getIndexedConversation(query: IndexedConversationQuery): P
 export async function prepareReportParticipants(root: string | undefined, participants: ReportParticipant[]): Promise<ReportParticipant[]> {
   const account = requireAccount(root)
   const stored = loadDatabaseKey(account.root)
-  if (!stored) return participants
-  const profiles = await runReportParticipantProfiles(account, stored.key, participants)
+  const profiles = stored ? await runReportParticipantProfiles(account, stored.key, participants).catch(() => participants) : participants
+  const originals = new Map(participants.map(member => [member.key, member.avatar]))
   return Promise.all(profiles.map(async member => {
-    const id = /^wetrace-media:\/\/preview\/([a-f\d]+)$/.exec(member.avatar ?? '')?.[1]
-    if (!id) return { ...member, avatar: member.avatar?.startsWith('data:image/') ? member.avatar : undefined }
-    const preview = await loadImagePreview(id)
-    return { ...member, avatar: preview ? `data:${preview.mime};base64,${preview.data.toString('base64')}` : undefined }
+    const original = originals.get(member.key)
+    const avatar = await embedReportAvatar(member.avatar)
+      ?? (original !== member.avatar ? await embedReportAvatar(original) : undefined)
+    return { ...member, avatar }
   }))
 }
 
-export async function queryPersonProfileEvidence(target: import('../shared/person-profile').PersonProfileTarget) {
+async function embedReportAvatar(source?: string): Promise<string | undefined> {
+  if (!source) return undefined
+  if (/^data:image\/(?:png|jpeg|webp|gif);base64,[a-zA-Z0-9+/=]+$/.test(source)) return source
+  try {
+    const id = /^wetrace-media:\/\/preview\/([a-f\d]+)$/.exec(source)?.[1]
+    const data = id ? (await loadImagePreview(id))?.data : await downloadWechatImage(source, fetch, raw => {
+      const url = new URL(raw)
+      if (!/^https?:$/.test(url.protocol) || url.username || url.password || url.port
+        || !/(^|\.)(qlogo|qpic)\.cn$/i.test(url.hostname)) throw new Error('头像地址无效')
+      url.protocol = 'https:'
+      return url.href
+    }, 2 * 1024 * 1024, 5000)
+    if (!data) return undefined
+    const mime = imageMime(data)
+    if (mime && mime !== 'image/bmp') return `data:${mime};base64,${data.toString('base64')}`
+  } catch {
+    // An unavailable avatar should only affect this member.
+  }
+  return undefined
+}
+
+export function createPersonProfileReader(target: import('../shared/person-profile').PersonProfileTarget) {
   if (!target || typeof target.root !== 'string' || !target.root
     || (target.kind !== 'contact' && target.kind !== 'group-member')) throw new Error('请选择画像对象')
   const room = target.kind === 'contact' ? target.contactId : target.groupId
@@ -239,7 +261,7 @@ export async function queryPersonProfileEvidence(target: import('../shared/perso
   const account = requireAccount(target.root)
   const stored = loadDatabaseKey(account.root)
   if (!stored) throw new Error('请先获取数据库密钥')
-  return runProfileEvidence(account, stored.key, room, member)
+  return (query: import('../shared/person-profile').ProfilePageQuery) => runProfileEvidence(account, stored.key, room, member, query)
 }
 
 export async function listGroupMembers(query: ConversationIndexQuery): Promise<import('../shared/types').GroupMember[]> {

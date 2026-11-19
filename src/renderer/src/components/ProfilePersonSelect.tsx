@@ -3,6 +3,19 @@ import { useRef, useState } from 'react'
 
 const pageSize = 20
 
+export function profilePersonChoices(label: string, options: { id: string; name: string }[]) {
+  const names = options.map(item => item.name && item.name !== item.id ? item.name : `未命名${label}`)
+  const counts = new Map<string, number>()
+  for (const name of names) counts.set(name, (counts.get(name) ?? 0) + 1)
+  const seen = new Map<string, number>()
+  return options.map((item, index) => {
+    const name = names[index]
+    const number = (seen.get(name) ?? 0) + 1
+    seen.set(name, number)
+    return { value: item.id, label: counts.get(name)! > 1 ? `${name}（${number}）` : name }
+  })
+}
+
 export function ProfilePersonSelect({ label, options, value, onChange, loading, disabled, empty }: {
   label: string
   options: { id: string; name: string }[]
@@ -15,16 +28,7 @@ export function ProfilePersonSelect({ label, options, value, onChange, loading, 
   const [search, setSearch] = useState('')
   const [visibleCount, setVisibleCount] = useState(pageSize)
   const scrollContainer = useRef<HTMLElement | null>(null)
-  const names = options.map(item => item.name && item.name !== item.id ? item.name : `未命名${label}`)
-  const counts = new Map<string, number>()
-  for (const name of names) counts.set(name, (counts.get(name) ?? 0) + 1)
-  const seen = new Map<string, number>()
-  const choices = options.map((item, index) => {
-    const name = names[index]
-    const number = (seen.get(name) ?? 0) + 1
-    seen.set(name, number)
-    return { value: item.id, label: counts.get(name)! > 1 ? `${name}（${number}）` : name }
-  })
+  const choices = profilePersonChoices(label, options)
   const filtered = choices.filter(item => item.label.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()))
   function resetResults(text: string) {
     setSearch(text)
