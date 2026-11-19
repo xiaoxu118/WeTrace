@@ -5,6 +5,8 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { ReportConversationQuery, ReportConversationResponse, GenerateReportInput, GenerateReportResponse, ReportProgress, DetectResult, FetchKeyResponse, KeyStatus, ModelConfig, ReportMessagesQuery, ReportMessagesResponse, SaveModelConfigInput, SyncResponse, VoiceModelDownloadResult, VoiceModelStatus, WechatAccount } from '../shared/types'
 
 const api = {
+  getOriginalImage: (query: import('../shared/types').OriginalImageQuery): Promise<import('../shared/types').OriginalImageResponse> => ipcRenderer.invoke('wechat:original-image', query),
+  saveRetainedFile: (input: import('../shared/types').SaveRetainedFileInput): Promise<import('../shared/types').SaveRetainedFileResponse> => ipcRenderer.invoke('wechat:save-retained-file', input),
   scheduledMessages: (root: string, action: import('../shared/scheduled-messages').SendTaskAction): Promise<import('../shared/scheduled-messages').SendTaskResponse> => ipcRenderer.invoke('messages:schedule', root, action),
   aiEvidence: (input: import('../shared/ai-evidence').AiEvidenceQuery): Promise<import('../shared/ai-evidence').AiEvidenceResponse> => ipcRenderer.invoke('ai:evidence', input),
   aiMemory: (root: string, action: import('../shared/ai-long-term-memory').AiMemoryAction): Promise<import('../shared/ai-long-term-memory').AiMemoryResponse> => ipcRenderer.invoke('ai:memory', root, action),

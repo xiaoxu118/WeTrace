@@ -14,7 +14,7 @@ export function registerRecallMediaAccount(root: string, key: string): string {
 }
 export function retainMedia(root: string, key: string, room: string, data: Buffer, mime: string): string | undefined {
   if (!directory || !conversationCacheAllowed(root, room)) return undefined
-  if (!/^(image\/(png|jpeg|gif|webp)|video\/mp4)$/.test(mime)) return undefined
+  if (!/^(image\/(png|jpeg|gif|webp)|video\/mp4|application\/octet-stream)$/.test(mime)) return undefined
   const account = registerRecallMediaAccount(root, key), roomId = digest(room), id = createHash('sha256').update(mime).update('\0').update(data).digest('hex')
   const folder = join(directory, account, roomId), file = join(folder, `${id}.bin`)
   mkdirSync(folder, { recursive: true, mode: 0o700 })
@@ -44,7 +44,7 @@ export function readRetainedMedia(url: string): { data: Buffer; mime: string } |
     cipher.setAuthTag(stored.subarray(12, 28))
     const body = Buffer.concat([cipher.update(stored.subarray(28)), cipher.final()]), split = body.indexOf(10)
     const mime = body.subarray(0, split).toString()
-    if (split < 0 || !/^(image\/(png|jpeg|gif|webp)|video\/mp4)$/.test(mime)) return undefined
+    if (split < 0 || !/^(image\/(png|jpeg|gif|webp)|video\/mp4|application\/octet-stream)$/.test(mime)) return undefined
     return { mime, data: body.subarray(split + 1) }
   } catch { return undefined }
 }
@@ -53,6 +53,7 @@ export function retainedMediaResponse(url: string, range?: string | null): Respo
   const media = readRetainedMedia(url)
   if (!media) return new Response('Media unavailable', { status: 404 })
   const headers: Record<string, string> = { 'Content-Type': media.mime, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-store' }
+  if (media.mime === 'application/octet-stream') headers['Content-Disposition'] = 'attachment'
   let start = 0, end = media.data.length - 1, status = 200
   if (range) {
     const match = /^bytes=(\d*)-(\d*)$/.exec(range)

@@ -1,4 +1,4 @@
-import { registerRecallMediaAccount } from './recall-media-store'
+import { registerRecallMediaAccount, retainMedia } from './recall-media-store'
 import { getCacheDirectory } from './cache-path'
 import type { ReportParticipant } from '../shared/report-facts'
 import type { ChatIndexSearchMatch, ChatIndexAction, ChatIndexStatus } from '../shared/chat-index'
@@ -150,8 +150,20 @@ export async function runWechatChatIndex(account: WechatAccount, key: string, ac
 export function runIndexSearch(account: WechatAccount, key: string, keyword: string): Promise<ChatIndexSearchMatch[]> {
   return request<ChatIndexSearchMatch[]>({ type: 'index-search', account, key, keyword })
 }
-export function runIndexedConversation(account: WechatAccount, key: string, conversationId: string, at?: number, limit?: number, refresh?: boolean): Promise<SyncConversation> {
-  return request<SyncConversation>({ type: 'index-conversation', account, key, conversationId, at, limit, refresh })
+export async function runIndexedConversation(account: WechatAccount, key: string, conversationId: string, at?: number, limit?: number, refresh?: boolean): Promise<SyncConversation> {
+  const conversation = await request<SyncConversation>({ type: 'index-conversation', account, key, conversationId, at, limit, refresh })
+  for (const message of conversation.messages) {
+    const id = /^wetrace-media:\/\/preview\/([a-f0-9]{64})$/.exec(message.image?.source || '')?.[1]
+    const preview = id && readImagePreview(id)
+    if (preview) {
+      try {
+        const source = retainMedia(account.root, key, conversationId, preview.data, preview.mime)
+        if (source && message.image) message.image = { ...message.image, source }
+      } catch { /* The capture writer will report persistence errors separately. */ }
+    }
+  }
+  // The records lane is the capture-store writer; do not race it from the statistics worker.
+  return request<SyncConversation>({ type: 'capture-read', account, key, conversation })
 }
 
 export function runReportParticipantProfiles(account: WechatAccount, key: string, participants: ReportParticipant[]): Promise<ReportParticipant[]> {
@@ -167,3 +179,9 @@ export function runGroupMonitor(account: WechatAccount, key: string, query: impo
 }
 
 export function runStickerUrl(account: WechatAccount, key: string, md5: string): Promise<string | null> { return request({ type: 'sticker-url', account, key, md5 }) }
+
+export function runOriginalImage(account: WechatAccount, key: string, query: import('../shared/types').OriginalImageQuery): Promise<NonNullable<SyncMessage['image']>> { return request({ type: 'original-image', account, key, query }) }
+
+export function notifyWechatMediaChanged(root: string, path?: string): void {
+  try { processInstances.get('records')?.postMessage({ type: 'media-changed', id: 0, root, path } satisfies RecordsCommand) } catch { /* A restarted worker begins with an empty presentation cache. */ }
+}

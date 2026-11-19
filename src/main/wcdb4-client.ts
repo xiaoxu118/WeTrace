@@ -53,6 +53,7 @@ export interface NativeBindings {
   execQuery?: (handle: number, kind: string, dbPath: string, sql: string, out: PointerOut) => number
   getGroupMembers?: (handle: number, username: string, out: PointerOut) => number
   getGroupNicknames?: (handle: number, username: string, out: PointerOut) => number
+  resolveImageHardlink?: (handle: number, md5: string, root: string, out: PointerOut) => number
   resolveVideoHardlink?: (handle: number, md5: string, dbPath: string, out: PointerOut) => number
   getEmoticonCdnUrl?: (handle: number, dbPath: string, md5: string, out: PointerOut) => number
   setMyWxid?: (handle: number, wxid: string) => number
@@ -126,9 +127,12 @@ function loadBindings(): NativeBindings {
 
   let getEmoticonCdnUrl: NativeBindings['getEmoticonCdnUrl']
   try { getEmoticonCdnUrl = library.func('int32 wcdb_get_emoticon_cdn_url(int64 handle, const char* dbPath, const char* md5, _Out_ void** outUrl)') as NativeBindings['getEmoticonCdnUrl'] } catch {}
+  let resolveImageHardlink: NativeBindings['resolveImageHardlink']
+  try { resolveImageHardlink = library.func('int32 wcdb_resolve_image_hardlink(int64 handle, const char* md5, const char* root, _Out_ void** outJson)') as NativeBindings['resolveImageHardlink'] } catch {}
   let resolveVideoHardlink: NativeBindings['resolveVideoHardlink']
   try { resolveVideoHardlink = library.func('int32 wcdb_resolve_video_hardlink_md5(int64 handle, const char* md5, const char* dbPath, _Out_ void** outJson)') as NativeBindings['resolveVideoHardlink'] } catch { /* Optional in older bridges. */ }
   return {
+    resolveImageHardlink,
     resolveVideoHardlink,
     getEmoticonCdnUrl,
     library,
@@ -270,6 +274,7 @@ function messageContent(row: Record<string, unknown>): string {
 
 export class Wcdb4Client {
   private handle: number | null = null
+  private profiles = new Map<string, { at: number; nickname?: string; avatar?: string }>()
   private displayNames = new Map<string, { at: number; name: string }>()
   private groupMembers = new Map<string, { at: number; ids: string[] }>()
   private groupNames = new Map<string, { at: number; names: Map<string, string> }>()
@@ -371,13 +376,16 @@ export class Wcdb4Client {
 
   getProfiles(usernames: string[]): Map<string, { nickname?: string; avatar?: string }> {
     const normalized = [...new Set(usernames.map((username) => username.trim()).filter(Boolean))]
+    const now = Date.now()
+    const pending = normalized.filter(id => now - (this.profiles.get(id)?.at ?? 0) >= 60000)
     const names = new Map<string, string>()
     const avatars = new Map<string, string>()
     if (!normalized.length) return new Map()
+    if (!pending.length) return new Map(normalized.map(id => { const profile = this.profiles.get(id)!; return [id, { nickname: profile.nickname, avatar: profile.avatar }] }))
 
     try {
       const rows = this.callJson<unknown>((handle, output) =>
-        bindings().getDisplayNames(handle, JSON.stringify(normalized), output)
+        bindings().getDisplayNames(handle, JSON.stringify(pending), output)
       )
       readStringMap(rows, [
         'remark',
@@ -394,7 +402,7 @@ export class Wcdb4Client {
 
     try {
       const rows = this.callJson<unknown>((handle, output) =>
-        bindings().getHeadImageBuffers(handle, JSON.stringify(normalized), output)
+        bindings().getHeadImageBuffers(handle, JSON.stringify(pending), output)
       )
       readStringMap(rows, ['image_hex', 'hex', 'data', 'buffer']).forEach((hex, username) => {
         const avatar = avatarHexToDataUrl(hex)
@@ -404,7 +412,7 @@ export class Wcdb4Client {
       // 本地头像不可用时继续尝试头像 URL。
     }
 
-    const missingAvatars = normalized.filter((username) => !avatars.has(username))
+    const missingAvatars = pending.filter((username) => !avatars.has(username))
     if (missingAvatars.length) {
       try {
         const rows = this.callJson<unknown>((handle, output) =>
@@ -423,12 +431,13 @@ export class Wcdb4Client {
       }
     }
 
-    return new Map(
-      normalized.map((username) => [
-        username,
-        { nickname: names.get(username) || undefined, avatar: avatars.get(username) },
-      ])
-    )
+    for (const id of pending) {
+      const old = this.profiles.get(id)
+      this.profiles.set(id, { at: names.has(id) || avatars.has(id) ? now : now - 55000,
+        nickname: names.get(id) || old?.nickname, avatar: avatars.get(id) || old?.avatar })
+    }
+    while (this.profiles.size > 10000) this.profiles.delete(this.profiles.keys().next().value!)
+    return new Map(normalized.map(id => { const profile = this.profiles.get(id); return [id, { nickname: profile?.nickname, avatar: profile?.avatar }] }))
   }
 
   getSelfProfile(): { nickname?: string; avatar?: string } {
@@ -530,6 +539,15 @@ export class Wcdb4Client {
         return this.normalizeMessages(rows, store.room, limit)
       },
     }
+  }
+
+  resolveImagePath(md5: string): string | undefined {
+    const read = bindings().resolveImageHardlink
+    if (!read || !/^[a-f\d]{32}$/i.test(md5)) return undefined
+    try {
+      const result = this.callJson<{ success?: boolean; full_path?: unknown }>((handle, output) => read(handle, md5.toLowerCase(), this.accountRoot, output))
+      return result.success && typeof result.full_path === 'string' ? result.full_path : undefined
+    } catch { return undefined }
   }
 
   resolveVideoFilename(md5: string): string | undefined {

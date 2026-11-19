@@ -19,7 +19,12 @@ app.whenReady().then(async () => {
   {id:'member-notice',createdAt:3000,messageType:10002,from:'them',senderId:'bob',sender:'其他成员',text:'撤回通知',avatar:'data:image/png;base64,invalid',revoke:{},time:'12:02'},
   {id:'recalled-image',createdAt:300,messageType:10002,from:'them',text:'撤回',revoke:{},recall:{original:'[图片]',originalAt:300,media:{image:{source:${JSON.stringify(avatar)}}}},time:'11:58'},
   {id:'recalled-video',createdAt:400,messageType:10002,from:'them',text:'撤回',revoke:{},recall:{original:'[视频]',originalAt:400,media:{video:{source:'wetrace-media://retained/'+ 'a'.repeat(64)+'/'+ 'b'.repeat(64)+'/'+ 'c'.repeat(64)}}},time:'11:58'},
+  {id:'recalled-file-image',createdAt:600,messageType:10002,from:'them',text:'撤回',revoke:{},recall:{original:'示例附件.PNG',originalType:49,originalAt:600,media:{file:{name:'示例附件.PNG',source:'wetrace-media://retained/'+['a','b','c'].map(value=>value.repeat(64)).join('/')},image:{source:${JSON.stringify(avatar)},thumbnail:false}}},time:'11:58'},
+  {id:'recalled-file-missing',createdAt:700,messageType:10002,from:'them',text:'撤回',revoke:{},recall:{original:'未下载附件.PNG',originalType:49,originalAt:700,media:{file:{name:'未下载附件.PNG',unavailable:'未留存文件内容'}}},time:'11:58'},
+  {id:'legacy-file',createdAt:800,messageType:10002,from:'them',text:'撤回',revoke:{},recall:{original:'旧附件.PNG',originalType:49,originalAt:800},time:'11:58'},
+  {id:'recalled-file-video',createdAt:900,messageType:10002,from:'them',text:'撤回',revoke:{},recall:{original:'示例视频.mp4',originalType:49,originalAt:900,media:{file:{name:'示例视频.mp4',source:'wetrace-media://retained/'+['a','b','d'].map(value=>value.repeat(64)).join('/')},video:{source:'wetrace-media://retained/'+['a','b','d'].map(value=>value.repeat(64)).join('/')}}},time:'11:58'},
  ];
+ const savedFiles=[];api.saveRetainedFile=async input=>{savedFiles.push(input);return {ok:true,canceled:false}};api.savedFileInputs=async()=>savedFiles;
  api.groupMonitor=async()=>({ok:true,data:{rooms:[{id:'test@chatroom',name:'产品讨论群',enabled:false,startedAt:0,avatars:{alice:${JSON.stringify(avatar)}},messages:[{id:'member-original',at:2000,type:1,sender:'成员甲',senderId:'alice',from:'them',text:'成员撤回的原文',revoked:true,revokeNoticeId:'member-notice'}]}],events:[]}});
  contextBridge.exposeInMainWorld('wetrace', api)
  `)
@@ -55,6 +60,19 @@ app.whenReady().then(async () => {
   for(let i=0;i<20 && !videoRequests;i++) await new Promise(resolve=>setTimeout(resolve,50))
   assert.ok(videoRequests > 0, '视频保留文件可通过媒体协议加载，不被页面安全策略阻止')
 
+  await until(`document.querySelector('[data-message-id="recalled-file-image"] .message-image')?.complete`)
+  assert.ok(await run(`document.querySelector('[data-message-id="recalled-file-image"]').textContent.includes('已保留文件')`))
+  await run(`document.querySelector('[data-message-id="recalled-file-image"] button').click()`)
+  await until(`window.wetrace.savedFileInputs().then(inputs=>inputs.length===1)`)
+  const saved=await run(`window.wetrace.savedFileInputs()`)
+  assert.equal(saved[0].name,'示例附件.PNG')
+  assert.match(saved[0].source,/^wetrace-media:\/\/retained\//)
+  assert.ok(await run(`document.querySelector('[data-message-id="recalled-file-missing"]').textContent.includes('仅保留文件名')`))
+  assert.equal(await run(`!!document.querySelector('[data-message-id="recalled-file-missing"] button')`),false)
+  assert.ok(await run(`document.querySelector('[data-message-id="legacy-file"]').textContent.includes('已保留消息说明')`))
+  assert.equal(await run(`document.querySelector('[data-message-id="legacy-file"]').textContent.includes('已保留原文')`),false)
+  assert.ok(await run(`!!document.querySelector('[data-message-id="recalled-file-video"] video[controls]') && !!document.querySelector('[data-message-id="recalled-file-video"] button')`),'文件型视频同时显示播放控件与另存为')
+  console.log('文件附件 UI 通过：文件型图片可预览和另存为，缺失文件与旧缓存状态准确。')
   console.log('聊天撤回 UI 测试通过：未开启群监控时展示已捕获原文、未捕获提示、可读通知、本人消息方向和原发言人头像、撤回图片和视频控件。')
  } finally {window.destroy();await fs.rm(preload,{force:true})}
 }).then(()=>app.exit(0)).catch(error=>{console.error(error);app.exit(1)})

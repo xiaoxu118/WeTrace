@@ -13,9 +13,10 @@ app.whenReady().then(async () => {
   const retained = 'wetrace-media://retained/'+['a','b','c'].map(letter=>letter.repeat(64)).join('/')
   source = source.replace("contextBridge.exposeInMainWorld('wetrace', api)", `
 const thumbnails = [${JSON.stringify(retained)},${JSON.stringify(thumbnail)},${JSON.stringify(thumbnail)}]
-data.conversations[0].messages=thumbnails.map((source,index)=>({id:'image-'+index,createdAt:(index+1)*1000,messageType:3,from:'them',time:'12:00',text:'[图片]',image:{source,thumbnail:true}}))
+data.conversations[0].messages=thumbnails.map((source,index)=>({id:'image-'+index,createdAt:(index+1)*1000,messageType:10002,from:'them',time:'12:00',text:'撤回通知',revoke:{},recall:{original:'[图片]',originalType:3,originalAt:(index+1)*1000,media:{image:{source,thumbnail:true,hashes:['a'.repeat(32)]}}}}))
 const previews=[]
-api.getIndexedConversation=async query=>{previews.push(query); const index=query.at/1000-1;const message=data.conversations[0].messages[index];return {ok:true,conversation:{...data.conversations[0],messages:[{...message,image:index===2?message.image:{source:${JSON.stringify(original)},thumbnail:false}}]}}}
+api.getOriginalImage=async query=>{previews.push(query); const index=query.createdAt/1000-1;const message=data.conversations[0].messages[index];return {ok:true,image:index===2?message.recall.media.image:{source:${JSON.stringify(original)},thumbnail:false}}}
+api.getIndexedConversation=async()=>{throw new Error('撤回原图查询不能依赖聊天分页')}
 api.originalPreviewQueries=async()=>previews
 contextBridge.exposeInMainWorld('wetrace', api)
 `)
@@ -31,7 +32,7 @@ contextBridge.exposeInMainWorld('wetrace', api)
     await until(`document.querySelectorAll('.chat-scroll .message-image').length===3`)
     for(const index of [0,1,2]) {
       await run(`document.querySelector('[data-message-id="image-${index}"] .message-image').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))`)
-      await until(`window.wetrace.originalPreviewQueries().then(queries=>queries.some(query=>query.at===${(index+1)*1000}))`)
+      await until(`window.wetrace.originalPreviewQueries().then(queries=>queries.some(query=>query.createdAt===${(index+1)*1000}))`)
       const expected=index===2?thumbnail:original
       await until(`document.querySelector('.ant-image-preview-img')?.getAttribute('src')===${JSON.stringify(expected)}`)
       if(index===2) assert.ok(await run(`document.querySelector('.image-preview-note').textContent.includes('当前为缩略图')`),'没有原图时显示实际状态并保留缩略图')

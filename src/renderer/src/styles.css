@@ -1042,21 +1042,21 @@ select:focus-visible {
 
 .mrow {
   display: flex;
-  gap: 9px;
+  gap: 12px;
   max-width: 74%;
   margin-bottom: 14px;
 }
 
 .mrow .av {
   display: grid;
-  flex: 0 0 30px;
-  width: 30px;
-  height: 30px;
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
   place-items: center;
   border-radius: 8px;
   background: #e9edf5;
   color: #5b6474;
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 600;
 }
 
@@ -3208,3 +3208,7 @@ select.inp {
 .group-monitor > .monitor-footer { margin-top: 20px; }
 
 .message-video { display: block; width: 320px; max-width: 100%; max-height: 360px; border-radius: 6px; background: #000; }
+
+.message-file-actions { display: flex; align-items: center; gap: 12px; overflow-wrap: anywhere; }
+.message-file-actions .btn { flex-shrink: 0; }
+.message-file .message-image-preview { margin-bottom: 8px; }

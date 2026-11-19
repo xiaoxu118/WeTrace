@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { configureRecallMediaStore, registerRecallMediaAccount, retainMedia, readRetainedMedia, retainedMediaResponse, excludeRecallMedia } from '../src/main/recall-media-store.ts'
 import { configureConversationCachePolicy, saveExcludedConversations } from '../src/main/conversation-cache-policy.ts'
-import { readLocalVideo, videoHashes } from '../src/main/local-video.ts'
+import { readLocalVideo, videoHashes, inspectLocalVideoHashes } from '../src/main/local-video.ts'
 import { emptyMonitor, observeRoom, saveMonitor, loadMonitor } from '../src/main/group-monitor.ts'
 import { captureChatRecalls } from '../src/main/chat-recall-capture.ts'
 const base = mkdtempSync(join(tmpdir(), 'wetrace-recall-media-'))
@@ -37,6 +37,11 @@ try {
   writeFileSync(join(videoDir, hash+'.mp4'), video.subarray(0, video.length-1))
   assert.equal(readLocalVideo(root, room, `<videomsg md5="${hash}" />`), undefined, '下载未完成时不保留损坏视频')
   assert.equal(readLocalVideo(root, room, '<videomsg md5="../../secret" />'), undefined)
+  assert.equal(inspectLocalVideoHashes(root,room,[]).reason,'no-metadata')
+  assert.equal(inspectLocalVideoHashes(root,room,['9'.repeat(32)]).reason,'not-found')
+  assert.equal(inspectLocalVideoHashes(root,room,[hash]).reason,'incomplete')
+  writeFileSync(join(videoDir,hash+'.mp4'),Buffer.from('unsupported-video-format'))
+  assert.equal(inspectLocalVideoHashes(root,room,[hash]).reason,'unsupported')
   const videoSource = retainMedia(root,key,room,video,'video/mp4')
   const partial = retainedMediaResponse(videoSource, 'bytes=4-11')
   assert.equal(partial.status,206);assert.deepEqual(Buffer.from(await partial.arrayBuffer()),video.subarray(4,12))

@@ -8,6 +8,8 @@ import type { ReportConversationQuery, ReportConversationResponse, GenerateRepor
 declare global {
   interface Window {
     wetrace: {
+      getOriginalImage(query: import('../shared/types').OriginalImageQuery): Promise<import('../shared/types').OriginalImageResponse>
+      saveRetainedFile(input: import('../shared/types').SaveRetainedFileInput): Promise<import('../shared/types').SaveRetainedFileResponse>
       resolveSticker(query: import('../shared/sticker').StickerQuery): Promise<import('../shared/sticker').StickerResponse>
       groupMonitor(query: import('../shared/group-monitor').MonitorQuery): Promise<import('../shared/group-monitor').MonitorResponse>
       listConversationOptions(root?: string): Promise<import('../shared/types').ConversationOptionsResponse>

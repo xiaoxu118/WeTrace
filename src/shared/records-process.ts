@@ -4,6 +4,9 @@ import type { SyncConversation, SyncMessage, ConversationIndexQuery, Conversatio
 
 export type RecordsCommand =
   | { type: 'init'; paths: { appPath: string; resourcesPath: string; statsPath: string; cachePath?: string } }
+  | { type: 'media-changed'; id: number; root: string; path?: string }
+  | { type: 'capture-read'; id: number; account: WechatAccount; key: string; conversation: SyncConversation }
+  | { type: 'original-image'; id: number; account: WechatAccount; key: string; query: import('./types').OriginalImageQuery }
   | { type: 'index-search'; id: number; account: WechatAccount; key: string; keyword: string }
   | { type: 'index-conversation'; id: number; account: WechatAccount; key: string; conversationId: string; at?: number; limit?: number; refresh?: boolean }
   | { type: 'chat-index'; id: number; account: WechatAccount; key: string; action: ChatIndexAction; excludedConversationIds?: string[] }
@@ -23,4 +26,4 @@ export type RecordsCommand =
 export type PreviewData = { id: string; data: Uint8Array; mime: string }
 export type RecordsEvent =
   | { type: 'preview'; preview: PreviewData }
-  | { type: 'result'; id: number; result?: string | import('./group-monitor').MonitorState | import('./types').ConversationOption[] | ReportParticipant[] | ChatIndexSearchMatch[] | SyncConversation | ChatIndexStatus | SyncMessage | ConversationIndexSummary | SpeechStatsResult | SyncResult | ReportMessagesResult | PreviewData | null; error?: string }
+  | { type: 'result'; id: number; result?: string | import('./group-monitor').MonitorState | import('./types').ConversationOption[] | ReportParticipant[] | ChatIndexSearchMatch[] | SyncConversation | ChatIndexStatus | NonNullable<SyncMessage['image']> | SyncMessage | ConversationIndexSummary | SpeechStatsResult | SyncResult | ReportMessagesResult | PreviewData | null; error?: string }

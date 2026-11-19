@@ -12,9 +12,9 @@ function captureMedia(message: import('../shared/types').SyncMessage, readPrevie
     const preview = /^[a-f0-9]{64}$/.test(id) ? readPreview(id) : undefined
     image = preview && /^image\/(png|jpeg|gif|webp)$/.test(preview.mime) && preview.data.length <= 1024 * 1024
       ? { ...image, source: `data:${preview.mime};base64,${Buffer.from(preview.data).toString('base64')}` }
-      : { unavailable: preview ? '图片超出本地撤回媒体保留上限' : '未捕获到图片内容' }
+      : { hashes: image.hashes, unavailable: preview ? '图片超出本地撤回媒体保留上限' : '未捕获到图片内容' }
   }
-  return { image, video: message.video, voice: message.voice?.hex && message.voice.hex.length <= 2 * 1024 * 1024 ? message.voice : undefined, sticker: message.sticker, link: message.link, forwarded: message.forwarded, quote: message.quote }
+  return { image, video: message.video, file: message.file, voice: message.voice?.hex && message.voice.hex.length <= 2 * 1024 * 1024 ? message.voice : undefined, sticker: message.sticker, link: message.link, forwarded: message.forwarded, quote: message.quote }
 }
 
 // Called in the records worker, the only writer of the encrypted capture store.
@@ -48,6 +48,40 @@ export function captureChatRecalls(state: MonitorState, conversation: SyncConver
   conversation.messages = retainedRecallMessages(conversation.messages, room).map(message => message.revoke && !message.recall
     ? { ...message, revoke: { ...message.revoke, unresolvedReason: room.captureGap ? 'capture-gap' as const : room.retentionLimited ? 'retention-limit' as const : room.messages.some(item => ![10000, 10002].includes(item.type >>> 0)) ? 'unlinked' as const : 'no-capture' as const } }
     : message)
+}
+
+/** Index/history reads must be captured too, without advancing the live-sync watermark. */
+export function captureReadConversation(state: MonitorState, conversation: Pick<SyncConversation, 'id' | 'name' | 'messages'>, now = Date.now(), readPreview?: PreviewReader): void {
+  let room = state.rooms.find(item => item.id === conversation.id)
+  if (!room) { room = { id: conversation.id, name: conversation.name, enabled: false, startedAt: now, messages: [] }; state.rooms.push(room) }
+  const checkedAt = room.checkedAt
+  const messages = conversation.messages.filter(message => !message.recall).map(message => ({
+    id: message.id, serverId: message.serverId, at: message.createdAt, type: message.messageType,
+    from: message.from, senderId: message.senderId, sender: message.sender || (message.from === 'me' ? '我' : conversation.name),
+    text: message.revoke?.targetId ? `<revokemsg><newmsgid>${message.revoke.targetId}</newmsgid></revokemsg>` : message.text,
+    media: captureMedia(message, readPreview),
+  }))
+  const conflicts = new Set<string>()
+  for (const message of messages) {
+    if ([10000, 10002].includes(message.type >>> 0)) continue
+    const old = room.messages.find(item => item.id === message.id)
+    if (!old || !parseRevokeMessage(old.type, old.text)) continue
+    const target = parseRevokeMessage(old.type, old.text)?.targetId
+    if (target ? target !== message.serverId : old.serverId && old.serverId !== '0' && message.serverId && message.serverId !== '0' && old.serverId !== message.serverId) { conflicts.add(message.id); continue }
+    // The index read may have started before the recall and reached this writer afterwards.
+    Object.assign(old, message, { revoked: true, revokeNoticeId: old.id })
+  }
+  observeRoom(state, room, messages.filter(message => !conflicts.has(message.id)), undefined, now, false)
+  // A notice may have been captured before the previously displayed original arrived.
+  const notices = room.messages.filter(message => parseRevokeMessage(message.type, message.text)).map(message => ({ ...message }))
+  observeRoom(state, room, notices, undefined, now, false)
+  for (const message of conversation.messages) {
+    if (message.senderId && message.avatar && !message.recall && !message.revoke && ![10000, 10002].includes(message.messageType >>> 0)) {
+      room.avatars ??= {}; room.avatars[message.senderId] = message.avatar
+    }
+  }
+  room.checkedAt = checkedAt
+  conversation.messages = retainedRecallMessages(conversation.messages, room)
 }
 
 /** Preserve explicitly read media without moving the latest-sync capture watermark. */

@@ -19,8 +19,10 @@ export function observeRoom(state: MonitorState, room: MonitorRoom, messages: Mo
     }
     room.members = members
   }
+  const byId = new Map<string, MonitorMessage>()
+  for (const message of room.messages) if (!byId.has(message.id)) byId.set(message.id, message)
   for (const message of messages) {
-    const old = room.messages.find(item => item.id === message.id)
+    const old = byId.get(message.id)
     if (isRevoke(message)) {
       if (old?.revoked) continue
       const target = parseRevokeMessage(message.type, message.text)?.targetId
@@ -34,7 +36,7 @@ export function observeRoom(state: MonitorState, room: MonitorRoom, messages: Mo
       // Keep captured text when WeChat replaces a row with its recall notice.
       if (old && original === old) continue
     } else if (!old && ![10000, 10002].includes(message.type >>> 0) && message.at >= Math.floor(room.startedAt / 1000) * 1000) emit('message', message.id, message.sender, message.text)
-    if (!old) room.messages.push({ ...message })
+    if (!old) { const captured = { ...message }; room.messages.push(captured); byId.set(message.id, captured) }
     else if (!isRevoke(message) && !old.revoked) {
       // The send acknowledgement assigns the server ID after the initial local record.
       if (message.serverId && message.serverId !== '0') old.serverId = message.serverId
@@ -47,6 +49,7 @@ export function observeRoom(state: MonitorState, room: MonitorRoom, messages: Mo
           if (old.media?.[kind]?.source && !message.media[kind]?.source) media[kind] = old.media[kind]
           if (kind === 'image' && old.media?.image?.source && !old.media.image.thumbnail && message.media.image?.thumbnail) media.image = old.media.image
         }
+        if (old.media?.file?.source && !message.media.file?.source) media.file = old.media.file
         old.media = media
       }
     }
@@ -63,7 +66,7 @@ export function observeRoom(state: MonitorState, room: MonitorRoom, messages: Mo
     const media = room.messages[index].media
     if (!media) continue
     mediaBytes += (media.voice?.hex?.length || 0) + (media.image?.source?.startsWith('data:') ? media.image.source.length : 0)
-    if (mediaBytes > 16 * 1024 * 1024) { delete media.voice; if (media.image?.source?.startsWith('data:')) media.image = { unavailable: '媒体已超出本地保留容量' }; room.retentionLimited = true }
+    if (mediaBytes > 16 * 1024 * 1024) { delete media.voice; if (media.image?.source?.startsWith('data:')) media.image = { hashes: media.image.hashes, unavailable: '媒体已超出本地保留容量' }; room.retentionLimited = true }
   }
   state.events = state.events.slice(-2000)
   room.checkedAt = now
@@ -91,7 +94,7 @@ export function saveMonitor(directory: string, root: string, key: string, state:
       const media = room.messages[index].media
       if (!media) continue
       accountMediaBytes += (media.voice?.hex?.length || 0) + (media.image?.source?.startsWith('data:') ? media.image.source.length : 0)
-      if (accountMediaBytes > 64 * 1024 * 1024) { delete media.voice; if (media.image?.source?.startsWith('data:')) media.image = { unavailable: '媒体已超出账号保留容量' }; room.retentionLimited = true }
+      if (accountMediaBytes > 64 * 1024 * 1024) { delete media.voice; if (media.image?.source?.startsWith('data:')) media.image = { hashes: media.image.hashes, unavailable: '媒体已超出账号保留容量' }; room.retentionLimited = true }
     }
   }
   mkdirSync(directory, { recursive: true, mode: 0o700 })

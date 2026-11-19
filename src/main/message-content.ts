@@ -81,7 +81,7 @@ const stickerLookups = new WeakMap<Map<string, string[]>, (hash: string) => stri
 const imageKeys = new WeakMap<Map<string, string[]>, ImageKey[]>()
 
 // Look up exact filenames within this conversation. Avoid reading the entire image archive on each refresh.
-export function localImages(root: string, username?: string): Map<string, string[]> {
+export function localImages(root: string, username?: string, resolvePath?: (hash: string) => string | undefined): Map<string, string[]> {
   const cache = new Map<string, string[]>()
   const attachment = path.join(root, 'msg/attach')
   let directories: string[] | undefined
@@ -113,6 +113,18 @@ export function localImages(root: string, username?: string): Map<string, string
         try { if (fs.statSync(file).isFile()) files.push(file) } catch { /* Resource not downloaded in this month. */ }
       }
     }
+    try {
+      const resolved = resolvePath?.(hash)
+      if (resolved) {
+        const file = fs.realpathSync(resolved), relative = path.relative(fs.realpathSync(root), file)
+        if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) {
+          const stem = path.basename(file).replace(/\.(?:dat|jpg|jpeg|png|gif|webp)$/i, '').replace(/_(?:hd|h_m|h|t_m|t|thumb)$/i, '')
+          for (const candidate of [file, ...imageVariantNames(stem).map(name => path.join(path.dirname(file), name))]) {
+            try { if (fs.lstatSync(candidate).isFile()) files.push(candidate) } catch { /* Optional original variant. */ }
+          }
+        }
+      }
+    } catch { /* Direct filename lookup remains available without the native mapping. */ }
     cache.set(hash, files)
     return files
   }
@@ -121,15 +133,19 @@ export function localImages(root: string, username?: string): Map<string, string
   return cache
 }
 
-export function presentMessage(type: number, content: string, images: Map<string, string[]>, fileHash?: string): Pick<SyncMessage, 'text' | 'revoke' | 'image' | 'sticker' | 'link' | 'quote' | 'forwarded'> {
+export function imageHashes(content: string, fileHash?: string): string[] {
+  const hashes = [...content.matchAll(/\bmd5\s*=\s*["']([a-f\d]{32})["']/gi)].map(match => match[1])
+  return [...new Set([fileHash || '', ...hashes, tag(content, 'md5')].filter(hash => /^[a-f\d]{32}$/i.test(hash)).map(hash => hash.toLowerCase()))]
+}
+
+export function presentMessage(type: number, content: string, images: Map<string, string[]>, fileHash?: string): Pick<SyncMessage, 'text' | 'revoke' | 'file' | 'image' | 'sticker' | 'link' | 'quote' | 'forwarded'> {
   switch (type >>> 0) {
     case 1: return { text: content || '[文本]' }
     case 3: {
-      const xmlHash = /\bmd5\s*=\s*["']([a-f\d]{32})["']/i.exec(content)?.[1] || tag(content, 'md5')
-      const hashes = [...new Set([fileHash, xmlHash.toLowerCase()].filter((hash): hash is string => Boolean(hash && /^[a-f\d]{32}$/i.test(hash))))]
+      const hashes = imageHashes(content, fileHash)
       const files = [...new Set(hashes.flatMap(hash => images.get(hash) ?? []))].sort((left, right) => Number(/(?:_t(?:_m)?|_thumb|_[bwc]|\.t)\.dat$/i.test(left)) - Number(/(?:_t(?:_m)?|_thumb|_[bwc]|\.t)\.dat$/i.test(right)))
       let decryptedUnsupported = false
-      let best: { data: Buffer; mime: string; thumbnail: boolean } | undefined
+      let best: { data: Buffer; mime: string; thumbnail: boolean; quality: number } | undefined
       for (const file of files) {
         try {
           if (fs.statSync(file).size > 20 * 1024 * 1024) continue
@@ -139,17 +155,18 @@ export function presentMessage(type: number, content: string, images: Map<string
           if (decoded && !mime) decryptedUnsupported = true
           if (decoded && mime) {
             const thumbnail = /(?:_t(?:_m)?|_thumb|_[bwc]|\.t)\.dat$/i.test(file) || decrypted?.subarray(0, 4).toString() === 'wxgf'
-            if (!best || (best.thumbnail && !thumbnail) || best.thumbnail === thumbnail && decoded.length > best.data.length) best = { data: decoded, mime, thumbnail }
+            const quality = thumbnail ? 0 : /_(?:hd|h|h_m)\.dat$/i.test(file) ? 3 : /_m\.dat$/i.test(file) ? 1 : 2
+            if (!best || quality > best.quality || quality === best.quality && decoded.length > best.data.length) best = { data: decoded, mime, thumbnail, quality }
           }
         } catch { /* Missing files must not interrupt synchronization. */ }
       }
-      if (best) return { text: '[图片]', image: { source: cacheImagePreview(best.data, best.mime), thumbnail: best.thumbnail } }
+      if (best) return { text: '[图片]', image: { source: cacheImagePreview(best.data, best.mime), thumbnail: best.thumbnail, hashes } }
       const found = files
       const unavailable = !found.length ? '图片尚未下载到本机'
         : decryptedUnsupported ? '图片已解密，但微信专用格式暂不能显示；请在微信中打开图片以生成缩略图后刷新'
         : !imageKeys.get(images)?.length ? '未找到图片密钥，请在微信中打开一张图片后刷新'
         : '图片解密失败或格式暂不支持，请在微信中打开原图后刷新'
-      return { text: '[图片]', image: { unavailable } }
+      return { text: '[图片]', image: { unavailable, hashes } }
     }
     case 49: {
       const xml = /<appmsg\b[^>]*>([\s\S]*?)<\/appmsg>/i.exec(content)?.[1] ?? content
@@ -169,6 +186,13 @@ export function presentMessage(type: number, content: string, images: Map<string
           : quotedType === 43 ? '[视频]' : quotedType === 47 ? '[表情]'
           : quotedType === 49 ? tag(raw, 'title') || '[链接或文件]' : raw.replace(/<[^>]*>/g, '').trim()
         return { text: title || '[引用消息]', quote: { sender: tag(reference, 'displayname') || tag(reference, 'chatusr') || tag(reference, 'fromusr') || '微信用户', text: summary || '[消息内容不可用]', type: quotedType || undefined, messageId: tag(reference, 'svrid') || undefined } }
+      }
+      if (Number(tag(body, 'type')) === 6) {
+        const size = Number(tag(body, 'totallen'))
+        const md5 = tag(body, 'md5') || tag(body, 'filemd5')
+        return { text: title || '[文件]', file: { name: title || '附件',
+          size: Number.isSafeInteger(size) && size > 0 ? size : undefined,
+          md5: /^[a-f\d]{32}$/i.test(md5) ? md5.toLowerCase() : undefined } }
       }
       const url = webUrl(tag(xml, 'url'))
       if (url) return { text: title || url, link: { url, title: title || url, description: tag(xml, 'des') || undefined } }

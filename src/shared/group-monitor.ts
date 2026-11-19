@@ -6,7 +6,7 @@ export interface MonitorMessage {
   sender: string
   text: string
   type: number
-  media?: Pick<SyncMessage, 'image' | 'video' | 'voice' | 'sticker' | 'link' | 'forwarded' | 'quote'>
+  media?: Pick<SyncMessage, 'image' | 'video' | 'file' | 'voice' | 'sticker' | 'link' | 'forwarded' | 'quote'>
   revoked?: boolean
   revokeNoticeId?: string
   from?: 'me' | 'them'

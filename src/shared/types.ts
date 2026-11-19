@@ -25,11 +25,12 @@ export interface SyncMessage {
   senderId?: string
   avatar?: string
   text: string
-  recall?: { original: string; originalAt: number; media?: Pick<SyncMessage, 'image' | 'video' | 'voice' | 'sticker' | 'link' | 'forwarded' | 'quote'> }
+  recall?: { original: string; originalAt: number; originalType?: number; media?: Pick<SyncMessage, 'image' | 'video' | 'file' | 'voice' | 'sticker' | 'link' | 'forwarded' | 'quote'> }
   reportMedia?: { content: string; serverId?: string; imageFileHash?: string }
   voice?: { hex?: string; unavailable?: string }
-  video?: { source?: string; unavailable?: string }
-  image?: { source?: string; unavailable?: string; thumbnail?: boolean }
+  file?: { name: string; size?: number; md5?: string; source?: string; unavailable?: string }
+  video?: { source?: string; unavailable?: string; hashes?: string[] }
+  image?: { source?: string; unavailable?: string; thumbnail?: boolean; hashes?: string[] }
   sticker?: { source?: string; unavailable?: string; label: string; md5?: string; cdnUrl?: string }
   link?: { url: string; title: string; description?: string }
   forwarded?: { title: string; entries: { sender: string; time?: string; text: string; messageType?: number }[]; unavailable?: string }
@@ -38,6 +39,7 @@ export interface SyncMessage {
 }
 
 export interface SyncConversation {
+  captureWarning?: string
   id: string
   name: string
   avatar?: string
@@ -207,3 +209,9 @@ export type ConversationOptionsResponse = { ok: true; conversations: Conversatio
 
 export interface VoiceMessageQuery { root?: string; conversationId: string; id: string; createdAt: number }
 export type VoiceMessageResponse = { ok: true; text: string; warning?: string } | { ok: false; error: string }
+
+export interface SaveRetainedFileInput { source: string; name: string }
+export type SaveRetainedFileResponse = { ok: true; canceled: boolean } | { ok: false; error: string }
+
+export interface OriginalImageQuery { root?: string; conversationId: string; messageId: string; createdAt: number }
+export type OriginalImageResponse = { ok: true; image: NonNullable<SyncMessage['image']> } | { ok: false; error: string }

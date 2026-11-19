@@ -10,8 +10,21 @@ export function videoHashes(xml: string, fileHash?: string): string[] {
 }
 
 export function readLocalVideo(root: string, room: string, xml: string, fileHash?: string, resolveFilename?: (hash: string) => string | undefined): Buffer | undefined {
-  const hashes = videoHashes(xml, fileHash)
-  if (!hashes.length) return undefined
+  return readLocalVideoHashes(root, room, videoHashes(xml, fileHash), resolveFilename)
+}
+
+export function readLocalVideoHashes(root: string, room: string, candidates: string[], resolveFilename?: (hash: string) => string | undefined): Buffer | undefined {
+  return inspectLocalVideoHashes(root, room, candidates, resolveFilename).data
+}
+
+export type VideoReadFailure = 'no-metadata' | 'not-found' | 'incomplete' | 'unsupported' | 'too-large' | 'read-failed'
+export function videoUnavailable(reason: VideoReadFailure): string {
+  return { 'no-metadata': '撤回前未保存视频定位信息，无法补取视频', 'not-found': '本机未找到对应视频文件', 'incomplete': '视频文件尚未下载完整或已损坏', 'unsupported': '已找到视频文件，但文件格式暂不支持', 'too-large': '视频超过本地留存大小上限', 'read-failed': '视频文件读取失败，请重试' }[reason]
+}
+export function inspectLocalVideoHashes(root: string, room: string, candidates: string[], resolveFilename?: (hash: string) => string | undefined): { data?: Buffer; reason?: VideoReadFailure } {
+  const hashes = [...new Set(candidates.filter(hash => /^[a-f\d]{32}$/i.test(hash)).map(hash => hash.toLowerCase()))].slice(0, 8)
+  if (!hashes.length) return { reason: 'no-metadata' }
+  let reason: VideoReadFailure = 'not-found'
   const names = new Set<string>()
   for (const hash of hashes) {
     let resolved: string | undefined
@@ -28,29 +41,17 @@ export function readLocalVideo(root: string, room: string, xml: string, fileHash
       const file = path.join(directory, name + extension)
       try {
         const info = fs.lstatSync(file)
-        if (!info.isFile() || info.size < 12 || info.size > 256 * 1024 * 1024) continue
+        if (!info.isFile()) continue
+        if (info.size < 12) { reason = 'incomplete'; continue }
+        if (info.size > 256 * 1024 * 1024) { reason = 'too-large'; continue }
         const fd = fs.openSync(file, 'r'), header = Buffer.alloc(12)
         try { fs.readSync(fd, header, 0, header.length, 0) } finally { fs.closeSync(fd) }
         if (header.toString('ascii', 4, 8) === 'ftyp') {
           const data = fs.readFileSync(file)
-          let offset = 0, movie = false, payload = false
-          while (offset + 8 <= data.length) {
-            let size = data.readUInt32BE(offset)
-            const box = data.toString('ascii', offset + 4, offset + 8)
-            if (size === 1) {
-              if (offset + 16 > data.length) break
-              const extended = data.readBigUInt64BE(offset + 8)
-              if (extended > BigInt(Number.MAX_SAFE_INTEGER)) break
-              size = Number(extended)
-            } else if (size === 0) size = data.length - offset
-            if (size < 8 || offset + size > data.length) break
-            if (box === 'moov') movie = true
-            if (box === 'mdat') payload = true
-            offset += size
-          }
-          if (offset === data.length && movie && payload) return data
-        }
-      } catch { /* Downloads may still be in progress. */ }
+          if (isCompleteMp4(data)) return data
+          reason = 'incomplete'
+        } else reason = 'unsupported'
+      } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') reason = 'read-failed' }
     }
     try {
       for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -61,6 +62,26 @@ export function readLocalVideo(root: string, room: string, xml: string, fileHash
     } catch { /* This WeChat version may use another media directory. */ }
     return undefined
   }
-  for (const directory of roots) { const result = visit(directory, 0); if (result) return result }
-  return undefined
+  for (const directory of roots) { const data = visit(directory, 0); if (data) return { data } }
+  return { reason }
+}
+
+export function isCompleteMp4(data: Buffer): boolean {
+  if (data.length < 12 || data.toString('ascii', 4, 8) !== 'ftyp') return false
+  let offset = 0, movie = false, payload = false
+  while (offset + 8 <= data.length) {
+    let size = data.readUInt32BE(offset)
+    const box = data.toString('ascii', offset + 4, offset + 8)
+    if (size === 1) {
+      if (offset + 16 > data.length) break
+      const extended = data.readBigUInt64BE(offset + 8)
+      if (extended > BigInt(Number.MAX_SAFE_INTEGER)) break
+      size = Number(extended)
+    } else if (size === 0) size = data.length - offset
+    if (size < 8 || offset + size > data.length) break
+    if (box === 'moov') movie = true
+    if (box === 'mdat') payload = true
+    offset += size
+  }
+  return offset === data.length && movie && payload
 }

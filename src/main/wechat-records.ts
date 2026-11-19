@@ -1,5 +1,9 @@
+import { SyncPresentationCache } from './sync-presentation-cache'
+import { refreshOriginalImage } from './recall-original-image'
+import { recoverCapturedAttachments } from './recall-attachment-recovery'
+import { readLocalAttachment } from './local-attachment'
 import { retainMedia, excludeRecallMedia } from './recall-media-store'
-import { readLocalVideo } from './local-video'
+import { inspectLocalVideoHashes, videoUnavailable, videoHashes } from './local-video'
 import { readImagePreview } from './image-preview-cache'
 import { recallCaptureWindow } from './recall-capture-window'
 import { captureChatRecalls } from './chat-recall-capture.ts'
@@ -82,11 +86,16 @@ export function controlWechatChatIndex(directory: string, account: WechatAccount
 
 export function applyWechatCacheExclusions(directory: string, account: WechatAccount, key: string): void {
   const rooms = excludedConversations(account.root)
+  syncPresentations.clear(account.root)
   excludeRecallMedia(account.root, rooms)
   chatIndex(directory, account, key).exclude(rooms)
   reportRecordCache.exclude(account.root, rooms)
   new ReportDiskIndex(join(directory, '..', 'cache', 'report-index')).exclude(account.root, key, rooms)
 }
+
+const syncPresentations = new SyncPresentationCache()
+const presentationPolicies = new Map<string, string>()
+export function invalidateSyncMedia(root: string, path?: string): void { syncPresentations.invalidate(root, path) }
 
 function presentRetainedMessage(account: WechatAccount, key: string, room: string, row: WcdbMessage, images: Map<string, string[]>): ReturnType<typeof presentMessage> & Pick<SyncMessage, 'video'> {
   const message = presentMessage(row.type, row.content, images, row.imageFileHash)
@@ -97,10 +106,18 @@ function presentRetainedMessage(account: WechatAccount, key: string, room: strin
       const source = preview && retainMedia(account.root, key, room, preview.data, preview.mime)
       if (source) message.image = { ...message.image, source }
     }
+    if (message.file) {
+      const attachment = readLocalAttachment(account.root, room, message.file)
+      const source = attachment && retainMedia(account.root, key, room, attachment.data, attachment.mime)
+      message.file = { ...message.file, ...(source ? { source } : { unavailable: '未留存文件内容' }) }
+      if (source && attachment?.mime.startsWith('image/')) message.image = { source, thumbnail: false }
+      if (source && attachment?.mime === 'video/mp4') Object.assign(message, { video: { source } })
+    }
     if ([43, 62].includes(row.type >>> 0)) {
-      const data = readLocalVideo(account.root, room, row.content, row.imageFileHash, hash => recordsClient(account, key).resolveVideoFilename(hash))
+      const hashes = videoHashes(row.content, row.imageFileHash)
+      const { data, reason } = inspectLocalVideoHashes(account.root, room, hashes, hash => recordsClient(account, key).resolveVideoFilename(hash))
       const source = data && retainMedia(account.root, key, room, data, 'video/mp4')
-      return { ...message, video: source ? { source } : { unavailable: data ? '视频尚未保存' : '视频尚未下载到本机或格式暂不支持' } }
+      return { ...message, video: { hashes, ...(source ? { source } : { unavailable: data ? '视频尚未保存' : videoUnavailable(reason || 'not-found') }) } }
     }
   } catch { /* Optional media storage must not interrupt message capture. */ }
   return message
@@ -123,6 +140,8 @@ function monthLabel(seconds: number): string {
 
 export function syncWechatRecords(account: WechatAccount, key: string, indexDirectory?: string): SyncResult {
   const client = recordsClient(account, key)
+  const policy = JSON.stringify(excludedConversations(account.root))
+  if (presentationPolicies.get(account.root) !== policy) { syncPresentations.clear(account.root); presentationPolicies.set(account.root, policy) }
   const sessions = client
     .getSessions()
     .sort((left, right) => right.lastActive - left.lastActive)
@@ -152,7 +171,7 @@ export function syncWechatRecords(account: WechatAccount, key: string, indexDire
 
     profileUsernames.add(username)
     const isGroup = username.endsWith('@chatroom')
-    const images = localImages(account.root, username)
+    const images = localImages(account.root, username, hash => client.resolveImagePath(hash))
     const messages: SyncMessage[] = rows.map((row) => {
       const mine = row.isSend || row.sender === account.wxid
       if (isGroup && !mine && row.sender) profileUsernames.add(row.sender)
@@ -163,7 +182,7 @@ export function syncWechatRecords(account: WechatAccount, key: string, indexDire
         from: mine ? 'me' : 'them',
         senderId: isGroup ? (mine ? account.wxid : row.sender || undefined) : undefined,
         sender: isGroup && !mine ? row.sender || undefined : undefined,
-        ...presentRetainedMessage(account, key, username, row, images),
+        ...syncPresentations.read(account.root, key, username, row, () => presentRetainedMessage(account, key, username, row, images)),
         time: clock(row.createTime),
       }
     })
@@ -216,6 +235,7 @@ export function syncWechatRecords(account: WechatAccount, key: string, indexDire
     const directory = join(indexDirectory, '..', 'group-monitor')
     monitorWarning = updateMonitorForSync(directory, account.root, key, state => {
       state.rooms = state.rooms.filter(room => conversationCacheAllowed(account.root, room.id))
+      recoverCapturedAttachments(state, account.root, key, hash => client.resolveVideoFilename(hash), { budgetMs: 100 })
       for (const conversation of conversations) if (conversationCacheAllowed(account.root, conversation.id)) {
         const room = state.rooms.find(item => item.id === conversation.id)
         if (room && truncatedCaptures.has(conversation.id)) room.captureGap = true
@@ -315,7 +335,7 @@ function readWechatReportMessages(
   }
   selectedRows.sort((left, right) => left.createTime - right.createTime)
   const isGroup = conversationId.endsWith('@chatroom')
-  const images = query.deferMedia ? new Map<string, string[]>() : localImages(account.root, conversationId)
+  const images = query.deferMedia ? new Map<string, string[]>() : localImages(account.root, conversationId, hash => recordsClient(account, key).resolveImagePath(hash))
   const profileUsernames = new Set<string>([account.wxid])
   const messages: SyncMessage[] = selectedRows.map(row => {
     const mine = row.isSend || row.sender === account.wxid
@@ -387,7 +407,7 @@ export function prepareWechatReportMedia(account: WechatAccount, key: string, co
     const voice = recordsClient(account, key).getVoiceData(conversationId, { id: message.id, createTime: Math.floor(message.createdAt / 1000), type: 34, content: media.content, serverId: media.serverId, isSend: message.from === 'me', sender: message.senderId || '' })
     return { ...message, voice }
   }
-  if (message.messageType === 3) return { ...message, ...presentMessage(3, media.content, localImages(account.root, conversationId), media.imageFileHash) }
+  if (message.messageType === 3) return { ...message, ...presentMessage(3, media.content, localImages(account.root, conversationId, hash => recordsClient(account, key).resolveImagePath(hash)), media.imageFileHash) }
   return message
 }
 
@@ -444,6 +464,32 @@ export function searchWechatChatIndex(directory: string, account: WechatAccount,
   return found.map(({ room, message }) => ({ conversationId: room, conversationName: names.get(room) || room, id: message.id, createdAt: message.createTime * 1000, text: presentMessage(message.type, message.content, new Map()).text }))
 }
 
+export function readOriginalImage(directory: string, account: WechatAccount, key: string, query: import('../shared/types').OriginalImageQuery): NonNullable<SyncMessage['image']> {
+  const allowed = conversationCacheAllowed(account.root, query.conversationId)
+  const monitorDirectory = join(directory, '..', 'group-monitor')
+  const state = allowed ? loadMonitor(monitorDirectory, account.root, key) : { rooms: [], events: [] }
+  const room = state.rooms.find(room => room.id === query.conversationId)
+  const originals = room?.messages.filter(message => ((message.type >>> 0) === 3 || Boolean(message.media?.image)) && (message.id === query.messageId || message.revokeNoticeId === query.messageId)) || []
+  if (originals.length > 1) throw new Error('无法唯一定位原图片')
+  const original = originals[0]
+  let image = original?.media?.image
+  const client = recordsClient(account, key)
+  if (!image?.hashes?.length && !(image?.source && image.thumbnail === false)) {
+    const at = original?.at ?? query.createdAt
+    const rows = allowed ? readChatIndex(directory, account, key, index => index.messages(query.conversationId, 0, at + 1, 200)) : undefined
+    const matches = (row: WcdbMessage): boolean => row.id === (original?.id || query.messageId) && row.createTime * 1000 === at && (row.type >>> 0) === 3
+    const row = rows?.find(matches) || client.getMessages(query.conversationId, 200).find(matches)
+    if (row) image = presentMessage(3, row.content, localImages(account.root, query.conversationId, hash => client.resolveImagePath(hash)), row.imageFileHash).image
+  }
+  if (!image) throw new Error('撤回前未保存原图定位信息，无法补取原图')
+  const refreshed = refreshOriginalImage(account.root, key, query.conversationId, image, hash => client.resolveImagePath(hash))
+  if (original && allowed && refreshed.source && refreshed.thumbnail === false) {
+    original.media = { ...original.media, image: refreshed }
+    saveMonitor(monitorDirectory, account.root, key, state)
+  }
+  return refreshed
+}
+
 export function readIndexedConversation(directory: string, account: WechatAccount, key: string, conversationId: string, at?: number, limit = MESSAGE_PAGE_SIZE, refresh = false): SyncConversation {
   const client = recordsClient(account, key)
   const indexed = !refresh && conversationCacheAllowed(account.root, conversationId) ? readChatIndex(directory, account, key, index => index.hasConversation(conversationId) && (at !== undefined || index.isFresh(recordsFingerprint(account.root)))
@@ -452,7 +498,7 @@ export function readIndexedConversation(directory: string, account: WechatAccoun
   const rows = indexed ? indexed.rows : client.getMessages(conversationId, limit)
   const profiles = client.getProfiles([conversationId, account.wxid, ...rows.map(row => row.sender)])
   const groupNames = conversationId.endsWith('@chatroom') ? client.getGroupNicknames(conversationId) : new Map<string, string>()
-  const images = localImages(account.root, conversationId)
+  const images = localImages(account.root, conversationId, hash => recordsClient(account, key).resolveImagePath(hash))
   const messages: SyncMessage[] = rows.map(row => ({
     id: row.id, serverId: row.serverId, createdAt: row.createTime * 1000, messageType: row.type,
     from: row.isSend || row.sender === account.wxid ? 'me' : 'them',

@@ -29,6 +29,6 @@ export function retainedRecallMessages(messages: SyncMessage[], room?: MonitorRo
     const avatar = original.senderId ? avatars.get(original.senderId) ?? (message.senderId === original.senderId ? message.avatar : undefined) : message.id === original.id ? message.avatar : undefined
     return [{ ...message, sender: original.sender, senderId: original.senderId, avatar,
       from: original.from || (original.sender === '我' ? 'me' as const : message.from),
-      recall: { original: original.text, originalAt: original.at, ...(original.media ? { media: original.media } : {}) } }]
+      recall: { original: original.text, originalAt: original.at, originalType: original.type, ...(original.media ? { media: original.media } : {}) } }]
   })
 }

@@ -1,11 +1,11 @@
 import { configureRecallMediaStore } from './recall-media-store'
-import { capturePreparedMedia } from './chat-recall-capture'
+import { captureReadConversation, capturePreparedMedia } from './chat-recall-capture'
 import { updateMonitorForSync } from './group-monitor'
 import { conversationCacheAllowed } from './conversation-cache-policy'
 import { configureConversationCachePolicy } from './conversation-cache-policy'
 import { join } from 'node:path'
 import { configureWcdbPaths, testDatabaseConnection } from './wcdb4-client'
-import { applyWechatCacheExclusions, queryStickerCdnUrl, queryGroupMonitor, listWechatConversationOptions, loadReportParticipantProfiles, searchWechatChatIndex, readIndexedConversation, controlWechatChatIndex, prepareWechatReportMedia, queryWechatConversationSummary, queryWechatSpeechStats, queryWechatReportMessages, syncWechatRecords } from './wechat-records'
+import { invalidateSyncMedia, readOriginalImage, applyWechatCacheExclusions, queryStickerCdnUrl, queryGroupMonitor, listWechatConversationOptions, loadReportParticipantProfiles, searchWechatChatIndex, readIndexedConversation, controlWechatChatIndex, prepareWechatReportMedia, queryWechatConversationSummary, queryWechatSpeechStats, queryWechatReportMessages, syncWechatRecords } from './wechat-records'
 import { onImagePreview, readImagePreview } from './image-preview-cache'
 import type { RecordsCommand, RecordsEvent } from '../shared/records-process'
 import { chatIndexErrorMessage } from '../shared/chat-index'
@@ -23,6 +23,18 @@ port.on('message', ({ data }: { data: RecordsCommand }) => {
     if (data.type === 'validate') {
       testDatabaseConnection(data.key, data.root)
       send({ type: 'result', id: data.id })
+    } else if (data.type === 'media-changed') {
+      invalidateSyncMedia(data.root, data.path)
+      send({ type: 'result', id: data.id })
+    } else if (data.type === 'capture-read') {
+      const conversation = data.conversation
+      if (conversationCacheAllowed(data.account.root, conversation.id)) {
+        const warning = updateMonitorForSync(join(statsPath, '..', 'group-monitor'), data.account.root, data.key, state => captureReadConversation(state, conversation, Date.now(), readImagePreview))
+        if (warning) conversation.captureWarning = warning
+      }
+      send({ type: 'result', id: data.id, result: conversation })
+    } else if (data.type === 'original-image') {
+      send({ type: 'result', id: data.id, result: readOriginalImage(chatDirectory(), data.account, data.key, data.query) })
     } else if (data.type === 'index-search') {
       send({ type: 'result', id: data.id, result: searchWechatChatIndex(chatDirectory(), data.account, data.key, data.keyword) })
     } else if (data.type === 'index-conversation') {

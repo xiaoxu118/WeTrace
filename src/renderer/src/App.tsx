@@ -100,6 +100,8 @@ const settingsNav: { id: SettingsPanel; label: string; icon: LucideIcon }[] = [
 
 function MessageContent({ message, root, conversationId }: { message: SyncMessage; root?: string; conversationId?: string }) {
   const [failedImage, setFailedImage] = useState<string>()
+  const [savingFile, setSavingFile] = useState(false)
+  const [fileError, setFileError] = useState('')
   const [failedVideo, setFailedVideo] = useState<string>()
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false)
   const [previewImage, setPreviewImage] = useState(message.image)
@@ -115,23 +117,24 @@ function MessageContent({ message, root, conversationId }: { message: SyncMessag
     setPreviewImage(message.image)
     setPreviewNote(message.image?.thumbnail ? '正在读取原图…' : '')
     if (message.image?.source && message.image.thumbnail === false) return
-    if (!root || !conversationId) { setPreviewNote(message.image?.thumbnail ? '本机暂未找到可显示的原图，当前为缩略图。请在微信中打开原图后重试。' : ''); return }
+    if (!root || !conversationId) { setPreviewNote(message.image?.thumbnail ? '本机未找到可读取的原图，当前为缩略图。' : ''); return }
     try {
-      const result = await window.wetrace.getIndexedConversation({ root, conversationId, at: message.createdAt, limit: 60 })
+      const result = await window.wetrace.getOriginalImage({ root, conversationId, messageId: message.id, createdAt: message.createdAt })
       if (request !== previewRequest.current) return
       if (!result.ok) throw new Error(result.error)
-      const found = result.conversation.messages.find(item => item.id === message.id)
-      const image = found?.image ?? found?.recall?.media?.image
+      const image = result.image
       if (!image?.source) throw new Error('未找到可显示的原图')
       if (!image.thumbnail || !message.image?.source) setPreviewImage(image)
-      setPreviewNote(image.thumbnail ? '本机暂未找到可显示的原图，当前为缩略图。请在微信中打开原图后重试。' : '')
-    } catch { if (request === previewRequest.current) setPreviewNote('暂未能重新读取原图，当前显示已加载的图片。请刷新聊天记录后重试。') }
+      setPreviewNote(image.thumbnail ? '本机未找到可读取的原图，当前为缩略图。' : '')
+    } catch (error) { if (request === previewRequest.current) setPreviewNote(error instanceof Error ? error.message : '原图读取失败，当前显示缩略图') }
   }
   if (message.recall) {
-    const retainedLabel = message.recall.media?.video?.source ? '已保留视频'
+    const retainedLabel = message.recall.media?.file ? (message.recall.media.file.source ? '已保留文件' : '仅保留文件名')
+      : message.recall.originalType !== undefined && (message.recall.originalType >>> 0) === 49 && !message.recall.media?.link && !message.recall.media?.forwarded && !message.recall.media?.quote ? '已保留消息说明'
+      : message.recall.media?.video?.source ? '已保留视频'
       : message.recall.media?.image?.source ? '已保留图片'
       : ['[图片]', '[视频]'].includes(message.recall.original) ? '已保留消息说明' : '已保留原文'
-    return <div className="message-recalled"><div>{message.recall.media ? <MessageContent message={{ ...message, ...message.recall.media, text: message.recall.original, recall: undefined, revoke: undefined, messageType: message.recall.media.image ? 3 : message.recall.media.video ? 43 : message.recall.media.voice ? 34 : 1 }} root={root} conversationId={conversationId} /> : <ChatText>{message.recall.original}</ChatText>}</div><small className="message-recall-label">已撤回 · {retainedLabel}</small></div>
+    return <div className="message-recalled"><div>{message.recall.media ? <MessageContent message={{ ...message, ...message.recall.media, text: message.recall.original, recall: undefined, revoke: undefined, messageType: message.recall.media.image ? 3 : message.recall.media.video ? 43 : message.recall.media.voice ? 34 : message.recall.media.file ? 49 : 1 }} root={root} conversationId={conversationId} /> : <ChatText>{message.recall.original}</ChatText>}</div><small className="message-recall-label">已撤回 · {retainedLabel}</small></div>
   }
   if (message.revoke) return <div className="message-revoke-notice"><SafeText>{message.text}</SafeText><small className="message-recall-label">{message.revoke.unresolvedReason === 'capture-gap' ? '捕获窗口存在缺口，未找到对应原文' : message.revoke.unresolvedReason === 'retention-limit' ? '未找到对应原文，较早内容可能已超出保留范围' : message.revoke.unresolvedReason === 'unlinked' ? '已保存会话消息，但暂无法确定对应原文' : '未捕获到可关联的原文'}</small></div>
   if (message.quote) return <><div><MessageContent message={{ ...message, quote: undefined }} root={root} conversationId={conversationId} /></div><blockquote className="message-quote"><b><SafeText>{message.quote.sender}</SafeText></b><span><ChatText>{message.quote.text}</ChatText></span></blockquote></>
@@ -141,6 +144,23 @@ function MessageContent({ message, root, conversationId }: { message: SyncMessag
   </details>
   if (message.messageType === 34) return <VoiceMessage key={`${root}:${conversationId}:${message.id}:${message.createdAt}`} message={message} root={root} conversationId={conversationId ?? ''} />
   if (message.sticker) return <StickerContent key={`${root}:${message.sticker.md5}:${message.sticker.cdnUrl}`} sticker={message.sticker} root={root} />
+  if (message.file) {
+    const file = message.file
+    return <div className="message-file">
+      {message.image || message.video ? <MessageContent message={{ ...message, file: undefined }} root={root} conversationId={conversationId} /> : null}
+      <div className="message-file-actions"><SafeText>{file.name}</SafeText>{file.source && <ActionButton className="btn sm" disabled={savingFile} onClick={async () => {
+        if (!file.source || savingFile) return
+        setSavingFile(true); setFileError('')
+        try {
+          const result = await window.wetrace.saveRetainedFile({ source: file.source, name: file.name })
+          if (!result.ok) setFileError(result.error)
+        } catch { setFileError('保存文件失败') }
+        finally { setSavingFile(false) }
+      }}>{savingFile ? '保存中…' : '另存为'}</ActionButton>}</div>
+      {!file.source && <span className="message-unavailable">{file.unavailable || '未留存文件内容'}</span>}
+      {fileError && <span className="message-unavailable">{fileError}</span>}
+    </div>
+  }
   if (message.video) return message.video.source
     ? <><video className="message-video" src={message.video.source} controls preload="metadata" onError={() => setFailedVideo(message.video?.source)} />{failedVideo === message.video.source && <span className="message-unavailable">视频无法播放，文件可能不完整或编码暂不支持</span>}</>
     : <span className="message-unavailable">{message.video.unavailable || '视频读取失败'}</span>
@@ -166,9 +186,10 @@ function MessageContent({ message, root, conversationId }: { message: SyncMessag
 function sameMessage(left: SyncMessage, right: SyncMessage): boolean {
   return left.id === right.id && left.createdAt === right.createdAt && left.messageType === right.messageType && left.from === right.from && left.sender === right.sender && left.avatar === right.avatar && left.text === right.text && left.time === right.time
     && JSON.stringify(left.revoke) === JSON.stringify(right.revoke)
-    && left.recall?.original === right.recall?.original && left.recall?.originalAt === right.recall?.originalAt && left.recall?.media === right.recall?.media
+    && left.recall?.original === right.recall?.original && left.recall?.originalAt === right.recall?.originalAt && left.recall?.originalType === right.recall?.originalType && left.recall?.media === right.recall?.media
     && left.image?.source === right.image?.source && left.image?.unavailable === right.image?.unavailable && left.image?.thumbnail === right.image?.thumbnail
     && left.video?.source === right.video?.source && left.video?.unavailable === right.video?.unavailable
+    && JSON.stringify(left.file) === JSON.stringify(right.file)
     && JSON.stringify(left.sticker) === JSON.stringify(right.sticker)
     && left.link?.url === right.link?.url && left.link?.title === right.link?.title && left.link?.description === right.link?.description
     && JSON.stringify(left.forwarded) === JSON.stringify(right.forwarded)
@@ -1197,7 +1218,7 @@ export default function App() {
   const reportConfigActive = view === 'summary' && summaryPanel === 'generate'
   useEffect(() => {
     if (!entered || reportConfigActive) return
-    const timer = window.setInterval(() => void doSync(rootDir ?? undefined, true), 20_000)
+    const timer = window.setInterval(() => void doSync(rootDir ?? undefined, true), 5_000)
     return () => window.clearInterval(timer)
   }, [entered, rootDir, reportConfigActive])
 
@@ -1368,7 +1389,7 @@ export default function App() {
     if (!response.ok) throw new Error(response.error)
     if (generation !== syncGeneration.current) return
     if (root) indexedConversationRef.current = { root, conversation: response.conversation, at: match.createdAt }
-    setReal(current => current && current.account.root === root ? { ...current, conversations: [response.conversation, ...current.conversations.filter(item => item.id !== response.conversation.id)] } : current)
+    setReal(current => current && current.account.root === root ? { ...current, monitorWarning: response.conversation.captureWarning ?? current.monitorWarning, conversations: [response.conversation, ...current.conversations.filter(item => item.id !== response.conversation.id)] } : current)
     setQuery('')
     setType('all')
     setSelectedId(response.conversation.id)
@@ -1390,7 +1411,7 @@ export default function App() {
       followChatBottom.current = true
       const conversation = preserveConversationAvatars({ ...selected, ...response.conversation }, selected)
       indexedConversationRef.current = { root, conversation }
-      setReal(current => current?.account.root === root ? { ...current, conversations: [conversation, ...current.conversations.filter(item => item.id !== conversation.id)] } : current)
+      setReal(current => current?.account.root === root ? { ...current, monitorWarning: conversation.captureWarning ?? current.monitorWarning, conversations: [conversation, ...current.conversations.filter(item => item.id !== conversation.id)] } : current)
       setHistoryEndKey(null)
       setSummaryRetry(value => value + 1)
       setAutoSyncError('')
@@ -1427,7 +1448,7 @@ export default function App() {
       historyAnchor.current = { key: requestKey, id: row?.dataset.messageId, offset: row && element ? row.getBoundingClientRect().top - element.getBoundingClientRect().top : 0, top, height }
       const conversation = preserveConversationAvatars({ ...selected, ...response.conversation }, selected)
       if (root) indexedConversationRef.current = { root, conversation, at }
-      setReal(current => current && current.account.root === root ? { ...current, conversations: current.conversations.map(item => item.id === conversation.id ? conversation : item) } : current)
+      setReal(current => current && current.account.root === root ? { ...current, monitorWarning: conversation.captureWarning ?? current.monitorWarning, conversations: current.conversations.map(item => item.id === conversation.id ? conversation : item) } : current)
       if (conversation.messages.length < selected.messages.length + 60) setHistoryEndKey(requestKey)
     } catch (error) {
       if (currentConversationKey.current === requestKey) notify(error instanceof Error ? error.message : '加载历史消息失败')
@@ -1540,7 +1561,7 @@ export default function App() {
     const directoryAtStart = activeRootRef.current
     const accountAtStart = activeAccountRootRef.current
     if (root && accountAtStart && root !== directoryAtStart && root !== accountAtStart) return
-    const syncRoot = root ?? accountAtStart ?? 'default'
+    const syncRoot = accountAtStart ?? root ?? 'default'
     const generation = syncGeneration.current
     if (syncInFlightRoots.current.has(syncRoot)) {
       if (silent) syncAgainRoots.current.add(syncRoot)
@@ -1818,7 +1839,7 @@ export default function App() {
             <div className="profile-popover-row"><span>数据库密钥</span><b>{detected?.hasKey ? '可用' : '未获取'}</b></div>
             <div className="profile-popover-row"><span>聊天记录</span><b>{autoSyncError ? '刷新失败' : real ? '可读取' : '未同步'}</b></div>
             {autoSyncError && <p className="profile-popover-error">{autoSyncError}</p>}
-            <p className="profile-popover-note">{real ? `最近刷新 ${new Date(real.syncedAt).toLocaleTimeString('zh-CN')} · 监听变化并每 20 秒检查` : '进入消息页后自动刷新本地记录'}</p>
+            <p className="profile-popover-note">{real ? `最近刷新 ${new Date(real.syncedAt).toLocaleTimeString('zh-CN')} · 监听变化并每 5 秒检查` : '进入消息页后自动刷新本地记录'}</p>
             <ActionButton type="button" className="btn sm" onClick={() => { setProfileOpen(false); openSettings('db') }}>账号与同步设置</ActionButton>
           </div>
         )}

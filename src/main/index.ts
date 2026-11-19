@@ -1,8 +1,9 @@
 import { previousStorage } from './storage-bootstrap'
 import { migrateLegacyStorage } from './storage-migration'
 import { reportDirectory } from './storage-paths'
-import { configureRecallMediaStore, retainedMediaResponse } from './recall-media-store'
+import { configureRecallMediaStore, retainedMediaResponse, readRetainedMedia } from './recall-media-store'
 import { getCacheDirectory } from './cache-path'
+import { watchWechatMedia } from './wechat-media-watch'
 import { ScheduledMessages } from './scheduled-messages'
 import { NativeMessageTransport } from './message-transport'
 import { wechatVersion } from './key-capture'
@@ -24,9 +25,9 @@ import { relaunchWithoutLibraryOverrides } from './startup-environment'
 import { app, BrowserWindow, dialog, ipcMain, shell, protocol, safeStorage } from 'electron'
 import fs from 'node:fs'
 import { configureImagePreviewDirectory } from './image-preview-cache'
-import { loadImagePreview, stopRecordsProcess } from './wechat-background'
+import { notifyWechatMediaChanged, loadImagePreview, stopRecordsProcess } from './wechat-background'
 import { join } from 'node:path'
-import { resolveSticker, groupMonitor, listConversationOptions, detectWechat, fetchKey, listWechatAccounts, searchChatIndex, getIndexedConversation, controlChatIndex, queryConversationSummary, querySpeechStats, prepareReportParticipants, prepareReportMedia, queryReportMessages, syncWechat } from './wechat'
+import { fetchOriginalImage, resolveSticker, groupMonitor, listConversationOptions, detectWechat, fetchKey, listWechatAccounts, searchChatIndex, getIndexedConversation, controlChatIndex, queryConversationSummary, querySpeechStats, prepareReportParticipants, prepareReportMedia, queryReportMessages, syncWechat } from './wechat'
 import { sipEnabled, wechatProcess, wechatRunning } from './security'
 import { deleteModelConfig, listModelConfigs, saveModelConfig, setDefaultModelConfig, testModelConfig } from './model-config-store'
 import { listReportStyles, saveReportStyle, deleteReportStyle } from './report-style-store'
@@ -92,7 +93,7 @@ function directorySize(directory: string): number {
   return size
 }
 
-const accountWatchers = new Map<number, fs.FSWatcher[]>()
+const accountWatchers = new Map<number, { close(): void }[]>()
 
 function stopAccountWatch(webContentsId: number): void {
   for (const watcher of accountWatchers.get(webContentsId) ?? []) watcher.close()
@@ -112,6 +113,19 @@ app.whenReady().then(() => {
     const id = url.pathname.slice(1)
     const image = url.hostname === 'preview' && /^[a-f0-9]{64}$/.test(id) ? await loadImagePreview(id).catch(() => undefined) : undefined
     return image ? new Response(new Uint8Array(image.data), { headers: { 'Content-Type': image.mime, 'Cache-Control': 'private, max-age=31536000, immutable' } }) : new Response('Image unavailable', { status: 404 })
+  })
+  ipcMain.handle('wechat:save-retained-file', async (event, input: import('../shared/types').SaveRetainedFileInput): Promise<import('../shared/types').SaveRetainedFileResponse> => {
+    try {
+      if (!input || typeof input.source !== 'string' || typeof input.name !== 'string' || !input.name || input.name.length > 255 || /[/\\\0]/.test(input.name) || ['.', '..'].includes(input.name)) throw new Error('文件信息无效')
+      const media = readRetainedMedia(input.source)
+      if (!media) throw new Error('留存文件不可用')
+      const window = BrowserWindow.fromWebContents(event.sender)
+      if (!window) throw new Error('窗口已关闭')
+      const result = await dialog.showSaveDialog(window, { title: '保存附件', defaultPath: input.name })
+      if (result.canceled || !result.filePath) return { ok: true, canceled: true }
+      await fs.promises.writeFile(result.filePath, media.data, { mode: 0o600 })
+      return { ok: true, canceled: false }
+    } catch (error) { return { ok: false, error: error instanceof Error ? error.message : '保存文件失败' } }
   })
   ipcMain.handle('app:get-info', () => ({
     version: app.getVersion(),
@@ -150,7 +164,7 @@ app.whenReady().then(() => {
     stopAccountWatch(event.sender.id)
     const account = listWechatAccounts(accountRoot).find((item) => item.root === accountRoot)
     if (!account) throw new Error('账号目录不存在，无法监听聊天变化')
-    const watchers: fs.FSWatcher[] = []
+    const watchers: { close(): void }[] = []
     for (const directory of ['message', 'session', 'contact']) {
       const target = join(account.root, 'db_storage', directory)
       if (!fs.existsSync(target)) continue
@@ -166,6 +180,10 @@ app.whenReady().then(() => {
         // 定时刷新仍会兜底处理未能监听的目录。
       }
     }
+    watchers.push(watchWechatMedia(account.root, path => {
+      notifyWechatMediaChanged(account.root, path)
+      if (!event.sender.isDestroyed()) event.sender.send('wechat:database-changed', account.root)
+    }))
     accountWatchers.set(event.sender.id, watchers)
   })
   ipcMain.handle('wechat:unwatch', (event) => stopAccountWatch(event.sender.id))
@@ -220,6 +238,10 @@ app.whenReady().then(() => {
   ipcMain.handle('wechat:index-search', async (_event, query: import('../shared/chat-index').ChatIndexSearchQuery) => {
     try { return { ok: true as const, matches: await searchChatIndex(query) } }
     catch (error) { return { ok: false as const, error: error instanceof Error ? error.message : '索引搜索失败' } }
+  })
+  ipcMain.handle('wechat:original-image', async (_event, query: import('../shared/types').OriginalImageQuery): Promise<import('../shared/types').OriginalImageResponse> => {
+    try { return { ok: true, image: await fetchOriginalImage(query) } }
+    catch (error) { return { ok: false, error: error instanceof Error ? error.message : '原图读取失败' } }
   })
   ipcMain.handle('wechat:index-conversation', async (_event, query: import('../shared/chat-index').IndexedConversationQuery) => {
     try { return { ok: true as const, conversation: await getIndexedConversation(query) } }

@@ -26,7 +26,7 @@ import {
 } from './database-key-store'
 import { captureAccountKey, wechatVersion } from './key-capture'
 import { sipEnabled } from './security'
-import { runStickerUrl, runGroupMonitor, runConversationOptions, loadImagePreview, runReportParticipantProfiles, runIndexSearch, runIndexedConversation, runWechatChatIndex, runWechatConversationSummary, runWechatSpeechQuery, runWechatReportMedia, runWechatReportQuery, runWechatSync, validateWechatDatabase } from './wechat-background'
+import { runOriginalImage, runStickerUrl, runGroupMonitor, runConversationOptions, loadImagePreview, runReportParticipantProfiles, runIndexSearch, runIndexedConversation, runWechatChatIndex, runWechatConversationSummary, runWechatSpeechQuery, runWechatReportMedia, runWechatReportQuery, runWechatSync, validateWechatDatabase } from './wechat-background'
 
 export type { DetectResult, SyncConversation, SyncMessage, SyncResult, WechatAccount }
 
@@ -251,4 +251,11 @@ export async function resolveSticker(query: import('../shared/sticker').StickerQ
   if (query.cdnUrl !== undefined && (typeof query.cdnUrl !== 'string' || query.cdnUrl.length > 8192)) throw new Error('表情包地址无效')
   stickers ??= new StickerResolver(path.join(getCacheDirectory(), 'stickers'))
   return stickers.resolve(account.root, query.md5, query.cdnUrl, async () => query.md5 ? await runStickerUrl(account, stored.key, query.md5) || undefined : undefined)
+}
+
+export async function fetchOriginalImage(query: import('../shared/types').OriginalImageQuery): Promise<NonNullable<SyncMessage['image']>> {
+  if (!query || typeof query.conversationId !== 'string' || !query.conversationId || typeof query.messageId !== 'string' || !query.messageId || !Number.isFinite(query.createdAt)) throw new Error('图片查询无效')
+  const account = requireAccount(query.root), stored = loadDatabaseKey(account.root)
+  if (!stored) throw new Error('请先获取数据库密钥')
+  return runOriginalImage(account, stored.key, query)
 }
