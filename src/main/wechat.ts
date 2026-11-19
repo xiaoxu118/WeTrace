@@ -26,7 +26,7 @@ import {
 } from './database-key-store'
 import { captureAccountKey, wechatVersion } from './key-capture'
 import { sipEnabled } from './security'
-import { runOriginalImage, runStickerUrl, runGroupMonitor, runConversationOptions, loadImagePreview, runReportParticipantProfiles, runIndexSearch, runIndexedConversation, runWechatChatIndex, runWechatConversationSummary, runWechatSpeechQuery, runWechatReportMedia, runWechatReportQuery, runWechatSync, validateWechatDatabase } from './wechat-background'
+import { runOriginalImage, runStickerUrl, runGroupMonitor, runProfileEvidence, runGroupMembers, runConversationOptions, loadImagePreview, runReportParticipantProfiles, runIndexSearch, runIndexedConversation, runWechatChatIndex, runWechatConversationSummary, runWechatSpeechQuery, runWechatReportMedia, runWechatReportQuery, runWechatSync, validateWechatDatabase } from './wechat-background'
 
 export type { DetectResult, SyncConversation, SyncMessage, SyncResult, WechatAccount }
 
@@ -229,10 +229,31 @@ export async function prepareReportParticipants(root: string | undefined, partic
   }))
 }
 
-export async function listConversationOptions(root?: string): Promise<import('../shared/types').ConversationOption[]> {
+export async function queryPersonProfileEvidence(target: import('../shared/person-profile').PersonProfileTarget) {
+  if (!target || typeof target.root !== 'string' || !target.root
+    || (target.kind !== 'contact' && target.kind !== 'group-member')) throw new Error('请选择画像对象')
+  const room = target.kind === 'contact' ? target.contactId : target.groupId
+  const member = target.kind === 'contact' ? target.contactId : target.memberId
+  if (typeof room !== 'string' || !room || room.endsWith('@chatroom') !== (target.kind === 'group-member')
+    || typeof member !== 'string' || !member) throw new Error('请选择有效的画像对象')
+  const account = requireAccount(target.root)
+  const stored = loadDatabaseKey(account.root)
+  if (!stored) throw new Error('请先获取数据库密钥')
+  return runProfileEvidence(account, stored.key, room, member)
+}
+
+export async function listGroupMembers(query: ConversationIndexQuery): Promise<import('../shared/types').GroupMember[]> {
+  if (typeof query?.conversationId !== 'string' || !query.conversationId.endsWith('@chatroom')) throw new Error('请选择群聊')
+  const account = requireAccount(query.root)
+  const stored = loadDatabaseKey(account.root)
+  if (!stored) throw new Error('请先获取数据库密钥')
+  return runGroupMembers(account, stored.key, query.conversationId)
+}
+
+export async function listConversationOptions(root?: string, textOnly?: boolean): Promise<import('../shared/types').ConversationOption[]> {
   const account = requireAccount(root), stored = loadDatabaseKey(account.root)
   if (!stored) throw new Error('请先获取数据库密钥')
-  return runConversationOptions(account, stored.key)
+  return runConversationOptions(account, stored.key, textOnly)
 }
 
 export async function groupMonitor(query: import('../shared/group-monitor').MonitorQuery): Promise<import('../shared/group-monitor').MonitorState> {

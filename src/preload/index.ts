@@ -15,7 +15,9 @@ const api = {
   transcribeVoiceMessage: (query: import('../shared/types').VoiceMessageQuery): Promise<import('../shared/types').VoiceMessageResponse> => ipcRenderer.invoke('wechat:voice-transcribe', query),
   resolveSticker: (query: import('../shared/sticker').StickerQuery): Promise<import('../shared/sticker').StickerResponse> => ipcRenderer.invoke('wechat:sticker', query),
   groupMonitor: (query: import('../shared/group-monitor').MonitorQuery): Promise<import('../shared/group-monitor').MonitorResponse> => ipcRenderer.invoke('wechat:group-monitor', query),
-  listConversationOptions: (root?: string): Promise<import('../shared/types').ConversationOptionsResponse> => ipcRenderer.invoke('wechat:conversation-options', root),
+  generatePersonProfile: (input: import('../shared/person-profile').GeneratePersonProfileInput): Promise<import('../shared/person-profile').PersonProfileResponse> => ipcRenderer.invoke('profile:generate', input),
+  listGroupMembers: (query: ConversationIndexQuery): Promise<import('../shared/types').GroupMembersResponse> => ipcRenderer.invoke('wechat:group-members', query),
+  listConversationOptions: (root?: string, textOnly?: boolean): Promise<import('../shared/types').ConversationOptionsResponse> => ipcRenderer.invoke('wechat:conversation-options', root, textOnly),
   loadAiPrompts: (): Promise<import('../shared/ai-prompt-settings').AiPromptSettingsResponse> => ipcRenderer.invoke('ai:prompts-load'),
   saveAiPrompts: (input: import('../shared/ai-prompt-settings').SaveAiPromptsInput): Promise<import('../shared/ai-prompt-settings').AiPromptSettingsResponse> => ipcRenderer.invoke('ai:prompts-save', input),
   onAiProgress: (callback: (progress: import('../shared/ai-chat').AiChatProgress) => void): (() => void) => {

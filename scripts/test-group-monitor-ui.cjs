@@ -13,7 +13,26 @@ app.whenReady().then(async () => {
  api.loadAiChatHistory=async()=>({ok:true,archive:{chats:[],activeId:null},revision:0});
  api.saveAiChatHistory=async()=>({ok:true,revision:1});
  let state={rooms:[],events:[]};const configurations=[];api.monitorConfigurations=async()=>configurations;
- api.listConversationOptions=async()=>({ok:true,conversations:[{id:'watch@chatroom',name:'产品讨论群',type:'group'},{id:'other@chatroom',name:'历史项目群',type:'group'}]});
+ api.listConversationOptions=async()=>({ok:true,conversations:[{id:'watch@chatroom',name:'产品讨论群',type:'group'},{id:'other@chatroom',name:'历史项目群',type:'group'},...Array.from({length:25},(_,index)=>({id:'private-contact-'+index,name:'联系人 '+String(index+1).padStart(2,'0'),type:'friend'}))]});
+ let otherGroupReads=0;
+ api.listGroupMembers=async ({conversationId})=>{
+  await new Promise(resolve=>setTimeout(resolve,300));
+  if(conversationId==='other@chatroom') return ++otherGroupReads===1
+   ? {ok:false,error:'测试群成员读取失败'}
+   : {ok:true,members:[{id:'private-other-member',name:'另一群的成员'}]};
+  return {ok:true,members:[{id:'private-member-1',name:'同名成员'},{id:'private-member-2',name:'同名成员'}]};
+ };
+ const profileRequests=[];
+ const profileTime=Date.now();
+ const profileMessage={id:'profile-message',createdAt:profileTime,target:true,speaker:0,text:'先确认测试范围，再安排复查。'};
+ api.profileRequests=async()=>profileRequests;
+ api.generatePersonProfile=async input=>{
+  profileRequests.push(input);
+  return {ok:true,profile:{from:profileTime-86400000,to:profileTime,evidence:[{anchor:profileMessage,messages:[profileMessage]}],observations:[{title:'先确认范围',detail:'讨论复查时先确认测试范围。',references:[1]}]}};
+ };
+ api.getIndexedConversation=async query=>query.conversationId!=='watch@chatroom'||query.at!==profileTime
+  ? {ok:false,error:'测试消息不匹配'}
+  : {ok:true,conversation:{...data.conversations[0],messages:[...data.conversations[0].messages,{...profileMessage,messageType:1,from:'them',sender:'同名成员',time:'12:00'}]}};
  let holdPoll=false,releasePoll;
  api.holdMonitorPoll=async()=>{holdPoll=true};
  api.releaseMonitorPoll=async()=>{holdPoll=false;releasePoll?.()};
@@ -38,6 +57,75 @@ app.whenReady().then(async () => {
  try {
   await window.loadFile(path.resolve('out/renderer/index.html'))
   await until(`!!document.querySelector('button[aria-label="群聊监控"]')`)
+  await run(`document.querySelector('button[aria-label="群聊监控"]').click()`)
+  await until(`!!document.querySelector('.group-monitor') && getComputedStyle(document.querySelector('.group-monitor')).display !== 'none'`)
+  await run(`void (window.originalMonitorPanel = document.querySelector('.group-monitor'))`)
+  await run(`document.querySelector('button[aria-label="画像"]').click()`)
+  await until(`!!document.querySelector('.profiles-view .ant-select')`)
+  const click = async selector => {
+   await until(`(() => {
+     const element = document.querySelector(${JSON.stringify(selector)})
+     if (!element) return false
+     const rect = element.getBoundingClientRect()
+     return element.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2))
+   })()`)
+   const point = await run(`(() => {
+     const rect = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect()
+     return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) }
+   })()`)
+   window.webContents.sendInputEvent({type:'mouseMove',...point})
+   window.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...point})
+   window.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,...point})
+  }
+  await click('.profiles-view .ant-select')
+  await until(`document.querySelectorAll('.profile-select-popup .ant-select-item-option').length === 20`)
+  assert.equal(await run(`!!document.querySelector('.profile-select-popup .ant-pagination')`), false)
+  assert.equal(await run(`document.querySelector('.profile-select-popup').textContent.includes('private-contact-')`), false)
+  await run(`(() => {
+    const list = document.querySelector('.profile-select-popup .ant-select-dropdown-list-holder')
+    list.scrollTop = list.scrollHeight
+  })()`)
+  await until(`!!document.querySelector('.profile-select-popup .ant-select-item-option[title="联系人 25"]') && document.querySelectorAll('.profile-select-popup .ant-select-item-option').length === 25`)
+  await run(`document.querySelector('.profiles-view input').focus()`)
+  window.webContents.insertText('联系人 02')
+  await until(`!!document.querySelector('.ant-select-item-option[title="联系人 02"]') && document.querySelectorAll('.profile-select-popup .ant-select-item-option').length === 1`)
+  await click('.ant-select-item-option[title="联系人 02"]')
+  await until(`!document.querySelector('.profiles-view .btn.primary').disabled && document.querySelector('.profiles-view .ant-select').textContent.includes('联系人 02')`)
+  assert.equal(await run(`document.querySelector('.profiles-view').textContent.includes('private-contact-')`), false)
+  await run(`[...document.querySelectorAll('.profiles-view .ant-segmented-item')].find(item => item.textContent === '群成员').click()`)
+  await click('.profiles-view .ant-select')
+  await click('.profile-select-popup:not(.ant-select-dropdown-hidden) [title="产品讨论群"]')
+  await until(`document.querySelectorAll('.profiles-view .ant-select').length === 2`)
+  await until(`!document.querySelector('.profiles-view .ant-select-loading')`)
+  await click('.profile-select + .profile-select .ant-select')
+  await click('.profile-select-popup:not(.ant-select-dropdown-hidden) [title="同名成员（2）"]')
+  await until(`!document.querySelector('.profiles-view .btn.primary').disabled && document.querySelector('.profiles-view').textContent.includes('同名成员（2）')`)
+  await click('.profiles-view .btn.primary')
+  await until(`document.querySelector('.profile-observations')?.textContent.includes('先确认范围')`)
+  const [profileRequest] = await run('window.wetrace.profileRequests()')
+  assert.deepEqual(profileRequest.target, {kind:'group-member',root:'/test',groupId:'watch@chatroom',memberId:'private-member-2'})
+  await click('.profile-observations button')
+  await until(`document.querySelector('.ant-modal')?.textContent.includes('先确认测试范围，再安排复查。')`)
+  await click('.ant-modal-footer button')
+  await until(`!!document.querySelector('[data-message-id="profile-message"]')`)
+  await click('button[aria-label="画像"]')
+  await until(`document.querySelector('.profile-observations')?.textContent.includes('先确认范围')`)
+  await click('.profiles-view .ant-select')
+  await click('.profile-select-popup:not(.ant-select-dropdown-hidden) [title="历史项目群"]')
+  await until(`document.querySelector('.profiles-view .ant-alert')?.textContent.includes('测试群成员读取失败') && document.querySelector('.profiles-view .btn.primary').disabled`)
+  assert.equal(await run(`!!document.querySelector('.profile-observations')`),false)
+  await click('.profiles-view .ant-alert button')
+  await until(`!document.querySelector('.profiles-view .ant-alert, .profiles-view .ant-select-loading')`)
+  await click('.profile-select + .profile-select .ant-select')
+  await click('.profile-select-popup:not(.ant-select-dropdown-hidden) [title="另一群的成员"]')
+  await until(`!document.querySelector('.profiles-view .btn.primary').disabled`)
+  for (const tab of ['消息', '群聊监控', '设置']) {
+   await run(`document.querySelector('button[aria-label="画像"]').click()`)
+   await until(`!!document.querySelector('.profiles-view')`)
+   await run(`document.querySelector('button[aria-label="${tab}"]').click()`)
+   assert.equal(await run(`document.querySelectorAll('.profiles-view').length`), 0, `切换至${tab}后应移除画像页`)
+   assert.equal(await run(`document.querySelector('.group-monitor') === window.originalMonitorPanel`), true, '群聊监控应保留原面板')
+  }
   await run(`document.querySelector('button[aria-label="群聊监控"]').click()`)
   await run(`Array.from(document.querySelectorAll('.monitor-filters button')).find(button=>button.textContent.includes('新建事件')).click()`)
   await until(`!!document.querySelector('.ant-modal')`)

@@ -1,3 +1,4 @@
+import { Profiles } from './components/Profiles'
 import { preserveConversationAvatars } from '../../shared/conversation-avatars'
 import { ScheduledMessagesPanel } from './components/ScheduledMessagesPanel'
 import { VoiceMessage } from './components/VoiceMessage'
@@ -43,6 +44,7 @@ import {
   Settings2,
   ShieldCheck,
   Trash2,
+  UserRound,
   X,
   type LucideIcon,
 } from 'lucide-react'
@@ -55,7 +57,7 @@ import { reportMemberKey, reportMemberName, filterReportMessages } from '../../s
 import { defaultReportStyles, type ReportWritingStyle } from '../../shared/report-styles'
 import { defaultReportTemplates } from '../../shared/report-templates'
 
-type View = 'send' | 'ai' | 'messages' | 'summary' | 'settings' | 'monitor'
+type View = 'send' | 'ai' | 'messages' | 'summary' | 'settings' | 'monitor' | 'profiles'
 type SettingsPanel = 'db' | 'model' | 'asr' | 'cache' | 'about'
 type SummaryPanel = 'home' | 'generate' | 'templates' | 'example'
 type ReportDatePreset = 'today' | 'yesterday' | 'week' | 'custom'
@@ -198,13 +200,13 @@ function sameMessage(left: SyncMessage, right: SyncMessage): boolean {
 const ChatMessages = memo(function ChatMessages({ conversation, accountName, accountAvatar, monitorRoom, root }: { conversation: SyncConversation; accountName: string; accountAvatar?: string; monitorRoom?: MonitorRoom; root?: string }) {
   return <><div className="daydiv"><span>{conversation.day}</span></div>{retainedRecallMessages(conversation.messages, monitorRoom).map((message) => {
     if (([10000, 10002].includes(message.messageType >>> 0) || /^(?:[“\"][^\n]+?[”\"]|[^\n]{1,80})\s*拍了拍\s*[“\"]/.test(message.text)) && !message.recall) {
-      return <div className="mrow message-system" key={`${conversation.id}:${message.id}`} data-message-id={message.id}>
+      return <div className="mrow message-system" key={`${conversation.id}:${message.id}`} data-message-id={message.id} data-message-time={message.createdAt}>
         <div className="message-system-text"><MessageContent message={{ ...message, text: message.text.replace(/&#(?:x([0-9a-f]+)|(\d+));/gi, (entity, hex: string, decimal: string) => { const code = Number.parseInt(hex || decimal, hex ? 16 : 10); return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : entity }) }} root={root} conversationId={conversation.id} /></div>
       </div>
     }
     const senderName = message.sender || (message.from === 'me' ? accountName : conversation.name)
     const avatar = message.from === 'me' ? accountAvatar : message.avatar ?? (conversation.type === 'group' ? undefined : conversation.avatar)
-    return <div className={`mrow${message.from === 'me' ? ' me' : ''}`} key={`${conversation.id}:${message.id}`} data-message-id={message.id}>
+    return <div className={`mrow${message.from === 'me' ? ' me' : ''}`} key={`${conversation.id}:${message.id}`} data-message-id={message.id} data-message-time={message.createdAt}>
       <ProfileAvatar name={senderName} avatar={avatar} className="av" /><div className="message-body">
         {(message.from === 'me' || Boolean(message.sender)) && <div className="sender"><SafeText>{senderName}</SafeText></div>}
         <div className="message-line"><div className="bubble"><MessageContent message={message} root={root} conversationId={conversation.id} /></div><div className="tm">{message.time}</div></div>
@@ -698,11 +700,7 @@ function LoginFlow({
               <div className="detect">
                 <div className="dr">
                   <span className="k">当前账号</span>
-                  <span className="v mono">{account ? account.wxid : '未检测到'}</span>
-                </div>
-                <div className="dr">
-                  <span className="k">数据目录</span>
-                  <span className="v mono subtle">{account ? account.id : 'xwechat_files'}</span>
+                  <span className="v mono">{account ? (account.nickname && account.nickname !== account.wxid ? account.nickname : '我的账号') : '未检测到'}</span>
                 </div>
                 <div className="dr">
                   <span className="k">数据库密钥</span>
@@ -844,6 +842,7 @@ export default function App() {
   const [appPlatform, setAppPlatform] = useState('')
   const searchRef = useRef<HTMLInputElement>(null)
   const chatScrollRef = useRef<HTMLDivElement>(null)
+  const profileCitationRef = useRef<ChatIndexSearchMatch | null>(null)
   const chatContentRef = useRef<HTMLDivElement>(null)
   const followChatBottom = useRef(true)
   const previousChatScrollTop = useRef(0)
@@ -867,7 +866,7 @@ export default function App() {
     return { total: messages.length, available: messages.filter(message => message.image?.source).length }
   }, [real])
   const account = real?.account ?? detected?.account ?? null
-  const accountName = account?.nickname || account?.wxid || '我的账号'
+  const accountName = account?.nickname && account.nickname !== account.wxid ? account.nickname : '我的账号'
   const dataHealthy = Boolean(real) && !syncError && !autoSyncError
   const dataStatusText = dataHealthy ? '数据获取正常' : syncError || autoSyncError ? '数据获取异常' : '等待获取数据'
   const displayDirectory = account?.root ?? rootDir ?? '未检测到微信数据目录'
@@ -1329,6 +1328,20 @@ export default function App() {
     if (view === 'messages' && element && followChatBottom.current && !historyRequest.current) element.scrollTop = element.scrollHeight
   }, [view, selected?.messages])
 
+  useLayoutEffect(() => {
+    const citation = profileCitationRef.current
+    const element = chatScrollRef.current
+    if (view !== 'messages' || !citation || !element || citation.conversationId !== selected?.id) return
+    profileCitationRef.current = null
+    const row = Array.from(element.querySelectorAll<HTMLElement>('[data-message-id]')).find(item =>
+      item.dataset.messageId === citation.id && Number(item.dataset.messageTime) === citation.createdAt)
+    if (row) {
+      followChatBottom.current = false
+      row.scrollIntoView({ block: 'nearest' })
+      previousChatScrollTop.current = element.scrollTop
+    }
+  }, [view, selected?.id, selected?.messages])
+
   async function selectDirectory() {
     try {
       const directory = await window.wetrace?.selectDirectory()
@@ -1381,12 +1394,19 @@ export default function App() {
     setLoginStep(detected?.hasKey ? 3 : 1)
   }
 
-  async function openIndexedSearchMatch(match: ChatIndexSearchMatch) {
+  async function openIndexedSearchMatch(match: ChatIndexSearchMatch, requireExact = false) {
     const root = real?.account.root ?? rootDir ?? undefined
     const generation = syncGeneration.current
     const response = await window.wetrace.getIndexedConversation({ root, conversationId: match.conversationId, at: match.createdAt })
     if (!response.ok) throw new Error(response.error)
-    if (generation !== syncGeneration.current) return
+    if (generation !== syncGeneration.current) {
+      if (requireExact) throw new Error('当前账号已切换')
+      return
+    }
+    if (requireExact && (!real || real.account.root !== root || !response.conversation.messages.some(message => message.id === match.id && message.createdAt === match.createdAt))) {
+      throw new Error('该条消息在当前聊天记录中不可用')
+    }
+    if (requireExact) profileCitationRef.current = match
     if (root) indexedConversationRef.current = { root, conversation: response.conversation, at: match.createdAt }
     setReal(current => current && current.account.root === root ? { ...current, monitorWarning: response.conversation.captureWarning ?? current.monitorWarning, conversations: [response.conversation, ...current.conversations.filter(item => item.id !== response.conversation.id)] } : current)
     setQuery('')
@@ -1799,6 +1819,7 @@ export default function App() {
           { id: 'ai' as View, label: 'AI 对话', icon: Sparkles },
           { id: 'monitor' as View, label: '群聊监控', icon: ShieldCheck },
           { id: 'send' as View, label: '定时发送', icon: MessageCircle },
+          { id: 'profiles' as View, label: '画像', icon: UserRound },
           { id: 'summary' as View, label: '总结', icon: FileText },
           { id: 'settings' as View, label: '设置', icon: Settings2 },
         ]).map(({ id, label, icon: Icon }) => (
@@ -1834,7 +1855,7 @@ export default function App() {
         </button>
         {profileOpen && (
           <div ref={profilePopover} className="profile-popover" role="dialog" aria-label="当前账号状态">
-            <div className="profile-popover-head"><ProfileAvatar name={accountName} avatar={account?.avatar} className="me" /><div><b><SafeText>{accountName}</SafeText></b><span>{account?.wxid ?? '未连接微信'}</span></div></div>
+            <div className="profile-popover-head"><ProfileAvatar name={accountName} avatar={account?.avatar} className="me" /><div><b><SafeText>{accountName}</SafeText></b>{!account && <span>未连接微信</span>}</div></div>
             <div className="profile-popover-row"><span>数据库密钥</span><b>{detected?.hasKey ? '可用' : '未获取'}</b></div>
             <div className="profile-popover-row"><span>聊天记录</span><b>{autoSyncError ? '刷新失败' : real ? '可读取' : '未同步'}</b></div>
             {autoSyncError && <p className="profile-popover-error">{autoSyncError}</p>}
@@ -1845,6 +1866,12 @@ export default function App() {
       </aside>
 
       <div className="workspace">
+        <Profiles key={`profiles:${rootDir ?? account?.root ?? ''}`} root={rootDir ?? account?.root}
+          visible={view === 'profiles'} recentConversations={real?.account.root === (rootDir ?? account?.root) ? real?.conversations : undefined}
+          onOpenMessage={async (conversationId, message) => {
+            await openIndexedSearchMatch({ conversationId, conversationName: '', id: message.id, createdAt: message.createdAt, text: message.text }, true)
+            setView('messages')
+          }} />
         {real?.account.root && <ScheduledMessagesPanel key={'send-' + real.account.root} root={real.account.root} visible={view === 'send'} />}
         {real?.account.root && <GroupMonitor conversations={real.conversations} key={real.account.root} root={real.account.root} visible={view === 'monitor'} onStateChange={(root, state) => setMonitorData({ root, state })} />}
         <div style={{ display: view === 'ai' ? 'contents' : 'none' }}><AiChat key={real?.account.root ?? 'none'} root={real?.account.root} conversations={real?.conversations ?? []} models={modelConfigs} launch={aiLaunch} onSettings={() => openSettings('model')} /></div>
@@ -2201,18 +2228,18 @@ export default function App() {
                         <span className="path" title={displayDirectory}>{displayDirectory}</span>
                         <ActionButton type="button" className="btn sm" onClick={() => void selectDirectory()}>更改</ActionButton>
                       </Field>
-                      <Field title="当前账号" hint={account?.id ?? '未检测到账号'}>
+                      <Field title="当前账号">
                         {account ? (
                           <span className="account-summary">
                             <ProfileAvatar name={accountName} avatar={account.avatar} className="settings-avatar" />
-                            <span className="kv"><SafeText>{accountName}</SafeText><small>{account.wxid}</small></span>
+                            <span className="kv"><SafeText>{accountName}</SafeText></span>
                           </span>
                         ) : (
                           <span className="kv">未连接<small>请先登录微信桌面版</small></span>
                         )}
                       </Field>
                       <Field title="切换账号" hint="选择本机已发现的微信账号">
-                        <Select className="provider" aria-label="切换账号" value={account?.root} disabled={syncing || accounts.length === 0} onChange={value => void switchAccount(value)} options={accounts.map(item => ({ value: item.root, label: item.wxid }))} />
+                        <Select className="provider" aria-label="切换账号" value={account?.root} disabled={syncing || accounts.length === 0} onChange={value => void switchAccount(value)} options={accounts.map((item, index) => ({ value: item.root, label: item.nickname && item.nickname !== item.wxid ? item.nickname : `微信账号 ${index + 1}` }))} />
                         <ActionButton type="button" className="btn sm" onClick={disconnectAccount}>退出 WeTrace</ActionButton>
                       </Field>
                       <Field title="数据库密钥" hint="用于解密本地 SQLCipher">

@@ -207,6 +207,8 @@ export type ConversationIndexResponse = { ok: true; data: ConversationIndexSumma
 export interface ReportHistoryItem { styleId?: string; styleName?: string; id: string; name: string; startDate: string; endDate: string; createdAt: number; htmlPath: string; pngPaths: string[] }
 
 export type ConversationOption = Pick<SyncConversation, 'id' | 'name' | 'type' | 'avatar'>
+export interface GroupMember { id: string; name: string; avatar?: string }
+export type GroupMembersResponse = { ok: true; members: GroupMember[] } | { ok: false; error: string }
 export type ConversationOptionsResponse = { ok: true; conversations: ConversationOption[] } | { ok: false; error: string }
 
 export interface VoiceMessageQuery { root?: string; conversationId: string; id: string; createdAt: number }

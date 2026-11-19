@@ -11,7 +11,9 @@ export type RecordsCommand =
   | { type: 'index-conversation'; id: number; account: WechatAccount; key: string; conversationId: string; at?: number; limit?: number; refresh?: boolean }
   | { type: 'chat-index'; id: number; account: WechatAccount; key: string; action: ChatIndexAction; excludedConversationIds?: string[] }
   | { type: 'apply-exclusions'; id: number; account: WechatAccount; key: string }
-  | { type: 'conversation-options'; id: number; account: WechatAccount; key: string }
+  | { type: 'profile-evidence'; id: number; account: WechatAccount; key: string; conversationId: string; memberId: string }
+  | { type: 'group-members'; id: number; account: WechatAccount; key: string; conversationId: string }
+  | { type: 'conversation-options'; id: number; account: WechatAccount; key: string; textOnly?: boolean }
   | { type: 'group-monitor'; id: number; account: WechatAccount; key: string; query: import('./group-monitor').MonitorQuery }
   | { type: 'sync'; id: number; account: WechatAccount; key: string }
   | { type: 'report-participants'; id: number; account: WechatAccount; key: string; participants: ReportParticipant[] }
@@ -26,4 +28,4 @@ export type RecordsCommand =
 export type PreviewData = { id: string; data: Uint8Array; mime: string }
 export type RecordsEvent =
   | { type: 'preview'; preview: PreviewData }
-  | { type: 'result'; id: number; result?: string | import('./group-monitor').MonitorState | import('./types').ConversationOption[] | ReportParticipant[] | ChatIndexSearchMatch[] | SyncConversation | ChatIndexStatus | NonNullable<SyncMessage['image']> | SyncMessage | ConversationIndexSummary | SpeechStatsResult | SyncResult | ReportMessagesResult | PreviewData | null; error?: string }
+  | { type: 'result'; id: number; result?: Omit<import('./person-profile').PersonProfile, 'observations'> | string | import('./group-monitor').MonitorState | import('./types').ConversationOption[] | import('./types').GroupMember[] | ReportParticipant[] | ChatIndexSearchMatch[] | SyncConversation | ChatIndexStatus | NonNullable<SyncMessage['image']> | SyncMessage | ConversationIndexSummary | SpeechStatsResult | SyncResult | ReportMessagesResult | PreviewData | null; error?: string }

@@ -733,6 +733,39 @@ select:focus-visible {
   display: flex;
 }
 
+.profiles-view {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 48px 32px 32px;
+  overflow: auto;
+}
+
+.profile-select {
+  position: relative;
+  width: min(100%, 320px);
+}
+
+.profile-select .ant-select {
+  width: 100%;
+}
+
+/* Anchor the popup to its field even when Electron has not aligned the portal. */
+.profile-select .profile-select-popup {
+  inset: calc(100% + 4px) auto auto 0 !important;
+}
+
+.profile-observations {
+  display: grid;
+  gap: 12px;
+  width: min(100%, 680px);
+}
+
+.profile-evidence-message .ant-typography {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 /* 消息 */
 .msg-layout {
   display: flex;

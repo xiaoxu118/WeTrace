@@ -10,7 +10,7 @@ import { excludedConversations, saveExcludedConversations } from './conversation
 import type { RecordsCommand, RecordsEvent, PreviewData } from '../shared/records-process'
 import type { SyncConversation, ConversationIndexQuery, ConversationIndexSummary, SpeechStatsQuery, SpeechStatsResult, SyncMessage, ReportMessagesFilter, ReportMessagesResult, SyncResult, WechatAccount } from '../shared/types'
 
-type RecordsLane = 'records' | 'statistics' | 'indexing' | 'reports' | 'media'
+type RecordsLane = 'records' | 'statistics' | 'directory' | 'indexing' | 'reports' | 'media'
 const processInstances = new Map<RecordsLane, UtilityProcess>()
 let nextId = 0
 const pending = new Map<number, { child: UtilityProcess; resolve: (result: unknown) => void; reject: (error: Error) => void }>()
@@ -23,7 +23,7 @@ const identity = (root: string, key: string): string => createHash('sha256').upd
 function recordsProcess(lane: RecordsLane): UtilityProcess {
   const existing = processInstances.get(lane)
   if (existing) return existing
-  const child = utilityProcess.fork(join(__dirname, 'wechat-records-process.js'), [], { serviceName: lane === 'media' ? 'WeTrace 原图读取' : lane === 'indexing' ? 'WeTrace 聊天索引' : lane === 'reports' ? 'WeTrace 报告读取' : lane === 'statistics' ? 'WeTrace 发言统计' : 'WeTrace 聊天读取' })
+  const child = utilityProcess.fork(join(__dirname, 'wechat-records-process.js'), [], { serviceName: lane === 'media' ? 'WeTrace 原图读取' : lane === 'indexing' ? 'WeTrace 聊天索引' : lane === 'reports' ? 'WeTrace 报告读取' : lane === 'directory' ? 'WeTrace 会话目录' : lane === 'statistics' ? 'WeTrace 发言统计' : 'WeTrace 聊天读取' })
   processInstances.set(lane, child)
   child.on('message', (event: RecordsEvent) => {
     if (event.type === 'preview') { cacheImagePreview(Buffer.from(event.preview.data), event.preview.mime); return }
@@ -56,9 +56,9 @@ function request<T>(command: Exclude<RecordsCommand, { type: 'init' }> extends i
     const id = ++nextId
     // A native read may stop responding.
     // Expired report requests release their pending entry; late replies are ignored.
-    const timedRecords = lane === 'records' || lane === 'statistics'
+    const timedRecords = lane === 'records' || lane === 'statistics' || lane === 'directory'
     const timer = lane === 'reports' || lane === 'media' || timedRecords ? setTimeout(() => {
-      const error = new Error(lane === 'media' ? '读取原图超时，请关闭预览后重试' : lane === 'reports' ? '读取报告记录超时，请重试' : '读取微信记录超时，请重新同步')
+      const error = new Error(lane === 'directory' ? '读取名单超时，请重试' : lane === 'media' ? '读取原图超时，请关闭预览后重试' : lane === 'reports' ? '读取报告记录超时，请重试' : '读取微信记录超时，请重新同步')
       pending.delete(id)
       reject(error)
       // A stuck native call cannot be interrupted within the worker. Retire only
@@ -71,7 +71,7 @@ function request<T>(command: Exclude<RecordsCommand, { type: 'init' }> extends i
         task.reject(error)
       }
       child.kill()
-    }, lane === 'media' ? 30_000 : lane === 'reports' ? 180_000 : 120_000) : undefined
+    }, lane === 'directory' ? 10_000 : lane === 'media' ? 30_000 : lane === 'reports' ? 180_000 : 120_000) : undefined
     const cleanup = (): void => { if (timer) clearTimeout(timer) }
     pending.set(id, { child, resolve: result => { cleanup(); resolve(result as T) }, reject: error => { cleanup(); reject(error) } })
     try { child.postMessage({ ...command, id }) } catch (error) { cleanup(); pending.delete(id); reject(error) }
@@ -174,8 +174,16 @@ export function runReportParticipantProfiles(account: WechatAccount, key: string
   return request<ReportParticipant[]>({ type: 'report-participants', account, key, participants })
 }
 
-export function runConversationOptions(account: WechatAccount, key: string): Promise<import('../shared/types').ConversationOption[]> {
-  return request({ type: 'conversation-options', account, key })
+export function runProfileEvidence(account: WechatAccount, key: string, conversationId: string, memberId: string): Promise<Omit<import('../shared/person-profile').PersonProfile, 'observations'>> {
+  return request({ type: 'profile-evidence', account, key, conversationId, memberId }, 'statistics')
+}
+
+export function runGroupMembers(account: WechatAccount, key: string, conversationId: string): Promise<import('../shared/types').GroupMember[]> {
+  return request({ type: 'group-members', account, key, conversationId }, 'directory')
+}
+
+export function runConversationOptions(account: WechatAccount, key: string, textOnly?: boolean): Promise<import('../shared/types').ConversationOption[]> {
+  return request({ type: 'conversation-options', account, key, textOnly }, textOnly ? 'directory' : undefined)
 }
 
 export function runGroupMonitor(account: WechatAccount, key: string, query: import('../shared/group-monitor').MonitorQuery): Promise<import('../shared/group-monitor').MonitorState> {

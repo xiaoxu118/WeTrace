@@ -11,7 +11,9 @@ declare global {
       saveRetainedFile(input: import('../../shared/types').SaveRetainedFileInput): Promise<import('../../shared/types').SaveRetainedFileResponse>
       resolveSticker(query: import('../../shared/sticker').StickerQuery): Promise<import('../../shared/sticker').StickerResponse>
       groupMonitor(query: import('../../shared/group-monitor').MonitorQuery): Promise<import('../../shared/group-monitor').MonitorResponse>
-      listConversationOptions(root?: string): Promise<import('../../shared/types').ConversationOptionsResponse>
+      generatePersonProfile(input: import('../../shared/person-profile').GeneratePersonProfileInput): Promise<import('../../shared/person-profile').PersonProfileResponse>
+      listGroupMembers(query: import('../../shared/types').ConversationIndexQuery): Promise<import('../../shared/types').GroupMembersResponse>
+      listConversationOptions(root?: string, textOnly?: boolean): Promise<import('../../shared/types').ConversationOptionsResponse>
       loadAiPrompts(): Promise<import('../../shared/ai-prompt-settings').AiPromptSettingsResponse>
       saveAiPrompts(input: import('../../shared/ai-prompt-settings').SaveAiPromptsInput): Promise<import('../../shared/ai-prompt-settings').AiPromptSettingsResponse>
       onAiProgress(callback: (progress: import('../../shared/ai-chat').AiChatProgress) => void): () => void

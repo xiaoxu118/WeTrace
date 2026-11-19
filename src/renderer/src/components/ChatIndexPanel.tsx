@@ -106,11 +106,11 @@ export function ChatIndexPanel({ state }: { state: ReturnType<typeof useChatInde
     return () => { active = false }
   }, [root])
   const excludedIds = status?.excludedConversationIds ?? []
-  const excludedGroups = excludedIds.map(id => groups.find(group => group.id === id) ?? { id, name: id })
+  const excludedGroups = excludedIds.map(id => groups.find(group => group.id === id) ?? { id, name: '未命名群聊' })
   const label = status ? { idle: '等待建立', building: '正在建立', paused: '已暂停', ready: '已就绪', error: '部分记录待重试' }[status.state] : '读取中…'
   const percent = status?.totalStores ? Math.round(status.completedStores / status.totalStores * 100) : 0
   const keyword = filter.trim().toLowerCase()
-  const searchResults = keyword ? groups.filter(group => !excludedIds.includes(group.id) && `${group.name} ${group.id}`.toLowerCase().includes(keyword)) : []
+  const searchResults = keyword ? groups.filter(group => !excludedIds.includes(group.id) && group.name.toLowerCase().includes(keyword)) : []
   return <Card className="chat-index-panel" title="聊天记录索引" extra={<Tag color={status?.state === 'ready' ? 'success' : status?.state === 'building' ? 'processing' : 'default'}>{label}</Tag>}>
     <Flex gap={48} wrap className="chat-index-stats">
       <Statistic title="已索引消息" value={status?.messages} formatter={value => status ? Number(value).toLocaleString() : '—'} suffix="条" />
@@ -135,7 +135,6 @@ export function ChatIndexPanel({ state }: { state: ReturnType<typeof useChatInde
           {searchResults.length ? searchResults.map(group => <Flex key={group.id} align="center" justify="space-between" gap={12} className="cache-exclusion-row">
             <Flex vertical gap={2} className="cache-exclusion-name">
               <Typography.Text strong>{group.name}</Typography.Text>
-              <Typography.Text type="secondary" className="cache-exclusion-id">{group.id}</Typography.Text>
             </Flex>
             <Button size="small" type="primary" loading={pendingExclusions.includes(group.id)} disabled={!status} onClick={() => setExcluded(group.id, true)}>排除</Button>
           </Flex>) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有找到可添加的群聊" />}
@@ -144,7 +143,6 @@ export function ChatIndexPanel({ state }: { state: ReturnType<typeof useChatInde
           {excludedGroups.length ? excludedGroups.map(group => <Flex key={group.id} align="center" justify="space-between" gap={12} className="cache-exclusion-row">
             <Flex vertical gap={2} className="cache-exclusion-name">
               <Typography.Text strong>{group.name}</Typography.Text>
-              <Typography.Text type="secondary" className="cache-exclusion-id">{group.id}</Typography.Text>
             </Flex>
             <Button size="small" loading={pendingExclusions.includes(group.id)} disabled={!status} onClick={() => setExcluded(group.id, false)}>取消排除</Button>
           </Flex>) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无排除的群聊" />}

@@ -5,7 +5,7 @@ import { conversationCacheAllowed } from './conversation-cache-policy'
 import { configureConversationCachePolicy } from './conversation-cache-policy'
 import { join } from 'node:path'
 import { configureWcdbPaths, testDatabaseConnection } from './wcdb4-client'
-import { invalidateSyncMedia, readOriginalImage, applyWechatCacheExclusions, queryStickerCdnUrl, queryGroupMonitor, listWechatConversationOptions, loadReportParticipantProfiles, searchWechatChatIndex, readIndexedConversation, controlWechatChatIndex, prepareWechatReportMedia, queryWechatConversationSummary, queryWechatSpeechStats, queryWechatReportMessages, syncWechatRecords } from './wechat-records'
+import { invalidateSyncMedia, readOriginalImage, applyWechatCacheExclusions, queryStickerCdnUrl, queryGroupMonitor, readWechatProfileEvidence, listWechatGroupMembers, listWechatConversationOptions, loadReportParticipantProfiles, searchWechatChatIndex, readIndexedConversation, controlWechatChatIndex, prepareWechatReportMedia, queryWechatConversationSummary, queryWechatSpeechStats, queryWechatReportMessages, syncWechatRecords } from './wechat-records'
 import { onImagePreview, readImagePreview } from './image-preview-cache'
 import type { RecordsCommand, RecordsEvent } from '../shared/records-process'
 import { chatIndexErrorMessage } from '../shared/chat-index'
@@ -46,8 +46,12 @@ port.on('message', ({ data }: { data: RecordsCommand }) => {
       // Read the latest policy, never replay an older full list from a queue.
       applyWechatCacheExclusions(chatDirectory(), data.account, data.key)
       send({ type: 'result', id: data.id })
+    } else if (data.type === 'profile-evidence') {
+      send({ type: 'result', id: data.id, result: readWechatProfileEvidence(chatDirectory(), data.account, data.key, data.conversationId, data.memberId) })
+    } else if (data.type === 'group-members') {
+      send({ type: 'result', id: data.id, result: listWechatGroupMembers(data.account, data.key, data.conversationId) })
     } else if (data.type === 'conversation-options') {
-      send({ type: 'result', id: data.id, result: listWechatConversationOptions(data.account, data.key) })
+      send({ type: 'result', id: data.id, result: listWechatConversationOptions(data.account, data.key, data.textOnly) })
     } else if (data.type === 'sticker-url') {
       send({ type: 'result', id: data.id, result: queryStickerCdnUrl(data.account, data.key, data.md5) })
     } else if (data.type === 'group-monitor') {

@@ -191,7 +191,6 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline-color:
 .cache-exclusion-row:last-child { border-bottom: 0; }
 .cache-exclusion-name { min-width: 0; }
 .cache-exclusion-row > .ant-btn { flex-shrink: 0; }
-.cache-exclusion-id { font-size: 12px; overflow-wrap: anywhere; }
 
 .ai-context-picker:has([aria-expanded="true"]) { min-width: 220px; }
 

@@ -1,3 +1,5 @@
+import { generatePersonProfile } from './person-profile'
+import type { GeneratePersonProfileInput, PersonProfileResponse } from '../shared/person-profile'
 import { previousStorage } from './storage-bootstrap'
 import { migrateLegacyStorage } from './storage-migration'
 import { reportDirectory } from './storage-paths'
@@ -27,7 +29,7 @@ import fs from 'node:fs'
 import { configureImagePreviewDirectory } from './image-preview-cache'
 import { notifyWechatMediaChanged, loadImagePreview, stopRecordsProcess } from './wechat-background'
 import { join } from 'node:path'
-import { fetchOriginalImage, resolveSticker, groupMonitor, listConversationOptions, detectWechat, fetchKey, listWechatAccounts, searchChatIndex, getIndexedConversation, controlChatIndex, queryConversationSummary, querySpeechStats, prepareReportParticipants, prepareReportMedia, queryReportMessages, syncWechat } from './wechat'
+import { fetchOriginalImage, resolveSticker, groupMonitor, listGroupMembers, listConversationOptions, detectWechat, fetchKey, listWechatAccounts, searchChatIndex, getIndexedConversation, controlChatIndex, queryConversationSummary, querySpeechStats, prepareReportParticipants, prepareReportMedia, queryReportMessages, syncWechat } from './wechat'
 import { sipEnabled, wechatProcess, wechatRunning } from './security'
 import { deleteModelConfig, listModelConfigs, saveModelConfig, setDefaultModelConfig, testModelConfig } from './model-config-store'
 import { listReportStyles, saveReportStyle, deleteReportStyle } from './report-style-store'
@@ -225,8 +227,13 @@ app.whenReady().then(() => {
     }
   })
 
-  ipcMain.handle('wechat:conversation-options', async (_event, root?: string) => {
-    try { return { ok: true as const, conversations: await listConversationOptions(root) } }
+  ipcMain.handle('wechat:group-members', async (_event, query: import('../shared/types').ConversationIndexQuery): Promise<import('../shared/types').GroupMembersResponse> => {
+    try { return { ok: true, members: await listGroupMembers(query) } }
+    catch (error) { return { ok: false, error: error instanceof Error ? error.message : '读取群成员失败' } }
+  })
+
+  ipcMain.handle('wechat:conversation-options', async (_event, root?: string, textOnly?: boolean) => {
+    try { return { ok: true as const, conversations: await listConversationOptions(root, textOnly === true) } }
     catch (error) { return { ok: false as const, error: error instanceof Error ? error.message : '读取会话列表失败' } }
   })
 
@@ -323,17 +330,38 @@ app.whenReady().then(() => {
   })
   const aiJobs = new AiChatJobs()
   const aiJobOwners = new WeakSet<Electron.WebContents>()
+  function trackAiJobOwner(sender: Electron.WebContents) {
+    if (aiJobOwners.has(sender)) return
+    aiJobOwners.add(sender)
+    const owner = sender.id
+    sender.once('destroyed', () => aiJobs.cancelOwner(owner))
+  }
+  ipcMain.handle('profile:generate', async (event, input: GeneratePersonProfileInput): Promise<PersonProfileResponse> => {
+    if (typeof input?.requestId !== 'string' || !input.requestId || !input.target) return { ok: false, error: '请选择画像对象' }
+    const owner = event.sender.id
+    let controller: AbortController
+    try {
+      controller = aiJobs.start(owner, input.requestId, JSON.stringify(['profile', input.target]))
+    } catch {
+      return { ok: false, error: '已有画像正在生成' }
+    }
+    trackAiJobOwner(event.sender)
+    try {
+      const profile = await generatePersonProfile(input.target, controller.signal, detail => {
+        if (!event.sender.isDestroyed()) event.sender.send('ai:progress', { requestId: input.requestId, detail })
+      })
+      return { ok: true, profile }
+    } catch (error) {
+      return { ok: false, error: controller.signal.aborted ? '已停止生成' : error instanceof Error ? error.message : '更新画像失败' }
+    } finally { aiJobs.finish(owner, input.requestId) }
+  })
   ipcMain.handle('ai:cancel', (event, requestId: string) => { aiJobs.cancel(event.sender.id, requestId) })
   ipcMain.handle('ai:chat', async (event, input: import('../shared/ai-chat').AiChatInput) => {
     if (!input || typeof input.requestId !== 'string' || !input.requestId || (input.chatId !== undefined && (typeof input.chatId !== 'string' || !input.chatId))) return { ok: false, error: '对话请求无效' }
     let controller: AbortController
     try { controller = aiJobs.start(event.sender.id, input.requestId, JSON.stringify([input.root, input.chatId ?? input.requestId])) }
     catch (error) { return { ok: false, error: error instanceof Error ? error.message : '无法启动对话' } }
-    if (!aiJobOwners.has(event.sender)) {
-      aiJobOwners.add(event.sender)
-      const owner = event.sender.id
-      event.sender.once('destroyed', () => aiJobs.cancelOwner(owner))
-    }
+    trackAiJobOwner(event.sender)
     try {
       let queryState: import('../shared/ai-chat').AiQueryState | undefined
       let memory: import('../shared/ai-chat').AiConversationMemory | undefined

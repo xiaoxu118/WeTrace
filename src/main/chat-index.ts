@@ -341,6 +341,46 @@ export class ChatIndex {
     const rows = this.db.prepare(`SELECT source,id,payload FROM messages WHERE room=? AND time>=? AND time<? AND (${clauses.join(' OR ')}) ORDER BY time,id`).all(room,start,end)
     return rows.map(row => this.unseal(row))
   }
+  profileWindows(room: string, memberId: string) {
+    const target = [room, memberId, room.endsWith('@chatroom') ? memberId : ''] as const
+    const filter = 'FROM messages WHERE room=? AND sender IN (?,?) AND type=1'
+    const first = this.db.prepare(`SELECT source,id,time,payload ${filter} ORDER BY time,id,source LIMIT 1`)
+    const last = this.db.prepare(`SELECT time ${filter} ORDER BY time DESC LIMIT 1`)
+    const anchors = this.db.prepare('SELECT source,id,time,payload FROM messages WHERE room=? AND sender IN (?,?) AND type=1 AND time>=? AND time<? ORDER BY time DESC,id DESC,source DESC LIMIT 1')
+    const before = this.db.prepare('SELECT source,id,sender,payload FROM messages WHERE room=? AND type=1 AND time>=? AND (time,id,source)<(?,?,?) ORDER BY time DESC,id DESC,source DESC LIMIT 4')
+    const after = this.db.prepare('SELECT source,id,sender,payload FROM messages WHERE room=? AND type=1 AND time<? AND (time,id,source)>(?,?,?) ORDER BY time,id,source LIMIT 4')
+    const bucketCount = 15
+    const candidatesPerBucket = 6
+    this.db.exec('BEGIN')
+    try {
+      const oldest = first.get(...target)
+      if (!oldest) return { from: 0, to: 0, buckets: [] }
+      const from = Number(oldest.time)
+      const to = Number(last.get(...target)!.time)
+      const span = to - from + 1
+      const slots = bucketCount * candidatesPerBucket
+      const buckets = Array.from({ length: bucketCount }, (_, bucket) => {
+        const rows = Array.from({ length: candidatesPerBucket }, (_, offset) => {
+          const slot = slots - 1 - bucket * candidatesPerBucket - offset
+          if (slot === 0) return oldest
+          const start = from + Math.ceil(span * slot / slots)
+          const end = from + Math.ceil(span * (slot + 1) / slots)
+          return start < end ? anchors.get(...target, start, end) : undefined
+        })
+        return rows.flatMap(row => {
+          if (!row) return []
+          const time = Number(row.time)
+          const position = [time, Number(row.id), String(row.source)] as const
+          const previous = before.all(room, time - 15 * 60_000, ...position).reverse()
+          const following = after.all(room, time + 15 * 60_000, ...position)
+          const unpack = (item: typeof row) => ({ message: this.unseal(item), sender: String(item.sender ?? '') })
+          return [{ anchor: this.unseal(row), previous: previous.map(unpack), following: following.map(unpack) }]
+        })
+      })
+      return { from, to, buckets }
+    } finally { this.db.exec('ROLLBACK') }
+  }
+
   messages(room: string, start = 0, end = 253402300800000, limit?: number): WcdbMessage[] {
     const rows = limit === undefined
       ? this.db.prepare('SELECT source,id,payload FROM messages WHERE room=? AND time>=? AND time<? ORDER BY time,id').all(room,start,end)
