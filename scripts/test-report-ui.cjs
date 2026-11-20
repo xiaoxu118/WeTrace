@@ -20,9 +20,8 @@ let indexState = 'idle'
 let indexActions = []
 let failNextReport = false
 let listener = () => {}
-let styles = [{ id: 'default', name: '默认', prompt: '先用几十字概括主要话题，再整理讨论重点', builtin: true }, { id: 'concise', name: '简洁摘要', prompt: '聚焦重点', builtin: true }, { id: 'detailed', name: '详尽纪要', prompt: '详细记录', builtin: true }]
+let styles = [{ id: 'default', name: '默认', prompt: '先用几十字概括主要话题，再整理讨论重点', builtin: true }]
 data.conversations[0].messages.push({ ...data.conversations[0].messages[0], id: '2', from: 'me', senderId: 'test', sender: '我', text: '我的发言' })
-styles.push({ id: 'personal-digest', name: '个人摘要', scope: 'personal', prompt: '总结个人发言', builtin: true })
 data.conversations[0].messages.push({ id: 'forward-selection', createdAt: Date.now(), messageType: 49, from: 'them', sender: '转发者', time: '12:00', text: '外层说明', forwarded: { title: '内部聊天', entries: [{ sender: '内部甲', text: '内部第一条' }, { sender: '内部乙', text: '内部第二条' }] } });
 data.conversations.push({ ...data.conversations[0], id: 'other@chatroom', name: '另一个讨论群' })
 const api = { listReports: async () => [{ id: 'saved-report', name: '已保存的产品讨论群日报', startDate: '2026-10-26', endDate: '2026-10-27', createdAt: 1793345650199, htmlPath: '/test/report.html', pngPaths: ['/test/report.png'] }], revealReport: async file => { revealedReport = file }, getRevealedReport: async () => revealedReport, onAiProgress: () => () => {}, onAiDelta: () => () => {}, getSelectionQuery: async () => selectionQuery, addSelectionFixture: async () => {}, onAiDelta: () => () => {}, getIndexActions: async () => indexActions, controlChatIndex: async query => { indexActions.push(query.action); if (query.action === 'sync' && indexState === 'idle') indexState = 'ready'; if (query.action === 'pause') indexState = 'paused'; if (query.action === 'rebuild' || query.action === 'start') indexState = 'building'; return { ok: true, data: { state: indexState, messages: 3, conversations: 2, completedStores: 1, totalStores: 2, current: 'test@chatroom', updatedAt: null, errors: [] } } }, getReportTargetKey: async () => lastTargetKey, setReportTestFailure: () => { failNextReport = true }, queryConversationSummary: async () => ({ ok: false, error: '模拟会话无统计索引' }), querySpeechStats: async () => ({ ok: false, error: '模拟统计' }), getReportTestStats: async () => ({ loads, oldQueries, generatedSnapshotId }), loadReportConversation: async query => { loads++; selectionQuery = query.selectedMessages; const messages = query.selectedMessages ? query.selectedMessages.map((item, index) => { const parent = data.conversations[0].messages.find(message => message.id === item.id); return item.entryIndex === undefined ? parent : { ...parent, id: 'inner-' + index, senderId: undefined, sender: parent.forwarded.entries[item.entryIndex].sender, text: parent.forwarded.entries[item.entryIndex].text, forwarded: undefined, messageType: 1 }; }) : data.conversations[0].messages; return { ok: true, data: { snapshotId: 'snapshot-' + loads, conversationId: query.conversationId, messages } } }, listReportStyles: async () => styles, saveReportStyle: async input => { const style = { ...input, id: input.id || 'custom-ui-test', builtin: false }; styles = [...styles.filter(item => item.id !== style.id), style]; return style }, deleteReportStyle: async id => { styles = styles.filter(item => item.id !== id); return styles }, getAppInfo: async () => ({ version: 'test', platform: 'darwin' }), listWechatAccounts: async () => [account], getCacheSize: async () => 0, detectWechat: async () => ({ account, hasKey: true }), getKeyStatus: async () => ({ hasKey: true }), syncWechat: async () => ({ ok: true, data }), watchWechatAccount: async () => {}, unwatchWechatAccount: async () => {}, onDatabaseChanged: () => () => {}, listModelConfigs: async () => ['text', 'image'].map(kind => ({ id: kind, kind, source: 'remote', name: kind === 'text' ? '报告语言模型' : '图片理解模型', isDefault: true })), getVoiceModelStatus: async () => voice, onVoiceModelProgress: () => () => {}, onReportProgress: callback => { listener = callback; return () => {} }, queryReportMessages: async () => { oldQueries++; throw new Error('不应重复查询') }, generateReport: async input => { generatedSnapshotId = input.snapshotId; lastTargetKey = input.targetMember?.key; listener({ requestId: input.requestId, stage: 'voice', percent: 25, detail: '本地离线转写 1/2', media: { voice: { total: 3, processed: 2, succeeded: 1, failed: 1, cached: 1 }, image: { total: 2, processed: 0, succeeded: 0, failed: 0, cached: 0 } } }); await new Promise(resolve => setTimeout(resolve, 1000)); if (failNextReport) { failNextReport = false; listener({ requestId: input.requestId, stage: 'error', percent: 0, detail: '测试生成失败', failedStep: '分段整理第 2 轮：3/4', advice: '缩小日期范围或选择简洁风格', diagnosticPath: '/test/task.jsonl' }); return { ok: false, error: '测试生成失败', advice: '缩小日期范围或选择简洁风格', diagnosticPath: '/test/task.jsonl' } }; listener({ requestId: input.requestId, stage: 'done', percent: 100, detail: '报告已生成', media: { voice: { total: 3, processed: 3, succeeded: 2, failed: 1, cached: 1 }, image: { total: 2, processed: 2, succeeded: 1, failed: 1, cached: 0 } } }); return { ok: true, data: { htmlPath: '/test/report.html', pngPaths: ['/test/report.png'], warnings: [], content: '报告' } } }, openReport: async () => {} }
@@ -80,7 +79,7 @@ contextBridge.exposeInMainWorld('wetrace', api)
     await until(`!!document.querySelector('.summary-action')`)
     await run(`document.querySelectorAll('.summary-action')[1].click()`)
     await until(`Array.from(document.querySelectorAll('button')).some(button => button.textContent.includes('查看示例'))`)
-    assert.equal(await run(`document.querySelectorAll('.template-list-item').length`), 1)
+    assert.equal(await run(`document.querySelectorAll('.template-list-item').length`), 2)
     await run(`Array.from(document.querySelectorAll('button')).find(button => button.textContent.includes('查看示例')).click()`)
     await until(`!!document.querySelector('iframe[title="默认模板报告示例"]')`)
     let example
@@ -91,6 +90,16 @@ contextBridge.exposeInMainWorld('wetrace', api)
     }
     assert.ok(example, '打包后的示例页面可打开')
     assert.ok((await fs.readFile(path.resolve('out/renderer/default-report-example.html'), 'utf8')).includes('template-mobile-feed'))
+    await run(`document.querySelector('.page-back').click()`)
+    await until(`!!document.querySelector('.template-list')`)
+    await run(`document.querySelectorAll('.template-list-item')[1].querySelector('button').click()`)
+    await until(`!!document.querySelector('iframe[title="话题点评模板报告示例"]')`)
+    const commentary = await run(`document.querySelector('iframe[title="话题点评模板报告示例"]').srcdoc`)
+    assert.match(commentary, /<strong>AI 评论<\/strong>/)
+    for (const title of ['待跟进', '资源与链接', '活跃度', '关键词', '观点反转', '参与链路']) {
+      assert.ok(!commentary.includes(`<h2>${title}</h2>`))
+    }
+    assert.ok(commentary.includes('<h2>发言排行</h2>'))
     await run(`document.querySelector('.page-back').click()`)
     await until(`!!document.querySelector('.template-list')`)
     await run(`document.querySelector('.page-back').click()`)
@@ -125,7 +134,7 @@ contextBridge.exposeInMainWorld('wetrace', api)
     assert.equal(await run(`document.documentElement.scrollWidth <= innerWidth`), true)
     assert.equal(await run(`document.querySelector('[aria-label="图片理解模型"]').value`), '')
     await run(`(() => { const select = document.querySelector('[aria-label="图片理解模型"]'); select.value = 'image'; select.dispatchEvent(new Event('change', { bubbles: true })); })()`)
-    assert.equal(await run(`document.querySelectorAll('input[name="report-style"]').length`), 0)
+    assert.deepEqual(await run(`Array.from(document.querySelectorAll('[aria-label="报告风格"] optgroup[label="内置风格"] option'), option => option.value)`), ['default'])
     await run(`Array.from(document.querySelectorAll('button')).find(button => button.textContent === '新建风格').click()`)
     await until(`!!document.querySelector('[aria-label="自定义风格名称"]')`)
     await run(`(() => { const set = (label, value, proto) => { const input = document.querySelector('[aria-label="' + label + '"]'); Object.getOwnPropertyDescriptor(proto, 'value').set.call(input, value); input.dispatchEvent(new Event('input', { bubbles: true })); }; set('自定义风格名称', '项目风格', HTMLInputElement.prototype); set('自定义风格要求', '优先整理风险及责任人', HTMLTextAreaElement.prototype); })()`)

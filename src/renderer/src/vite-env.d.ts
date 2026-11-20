@@ -7,13 +7,19 @@ import type { ConversationIndexQuery, ConversationIndexResponse, SpeechStatsQuer
 declare global {
   interface Window {
     wetrace: {
+      onProcessingTasks(callback: (tasks: import('../../shared/task-center').ProcessingTask[]) => void): () => void
       getOriginalImage(query: import('../../shared/types').OriginalImageQuery): Promise<import('../../shared/types').OriginalImageResponse>
       saveRetainedFile(input: import('../../shared/types').SaveRetainedFileInput): Promise<import('../../shared/types').SaveRetainedFileResponse>
       resolveSticker(query: import('../../shared/sticker').StickerQuery): Promise<import('../../shared/sticker').StickerResponse>
       groupMonitor(query: import('../../shared/group-monitor').MonitorQuery): Promise<import('../../shared/group-monitor').MonitorResponse>
       generatePersonProfile(input: import('../../shared/person-profile').GeneratePersonProfileInput): Promise<import('../../shared/person-profile').PersonProfileResponse>
+      retryProcessingTask(id: number): Promise<void>
+      cancelProcessingTask(id: number): Promise<void>
+      onPersonProfileSaved(callback: (record: import('../../shared/person-profile').SavedPersonProfile) => void): () => void
       listPersonProfiles(root: string): Promise<import('../../shared/person-profile').ListPersonProfilesResponse>
+      listPersonProfileAvatars(root: string, userIds: string[]): Promise<import('../../shared/person-profile').ProfileAvatar[]>
       editPersonProfile(input: import('../../shared/person-profile').EditPersonProfileInput): Promise<import('../../shared/person-profile').PersonProfileResponse>
+      exportChat(query: import('../../shared/chat-export').ChatExportQuery): Promise<import('../../shared/chat-export').ChatExportResponse>
       listGroupMembers(query: import('../../shared/types').ConversationIndexQuery): Promise<import('../../shared/types').GroupMembersResponse>
       listConversationOptions(root?: string, textOnly?: boolean): Promise<import('../../shared/types').ConversationOptionsResponse>
       loadAiPrompts(): Promise<import('../../shared/ai-prompt-settings').AiPromptSettingsResponse>

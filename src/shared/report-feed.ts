@@ -934,6 +934,20 @@ const feedTemplate = String.raw`<!doctype html>
 </html>
 `
 
+export const commentaryReportFeedPrompt = reportFeedPrompt
+  .replace(/^[ \t]*"(?:pendingNote|statusLine|keywords|resources|todos|unresolved|reversals|participantChains)":.*\n/gm, '')
+  .replace(/,(\n[ \t]*})/g, '$1')
+  .replace('优先保留结论、待办、未解决问题、明确通知，再保留趣味内容。', '优先保留结论和明确通知，再保留趣味内容。')
+  .replace('、待办最多5条、未解决最多3条', '')
+  .replace('、关键词最多12个', '')
+  .replace('    "conclusion":', '    "aiComment": "基于该话题记录，用1–2句话点评讨论的关键分歧、取舍或影响",\n    "conclusion":')
+  + '\n每个话题都必须填写 aiComment。基于该话题的原始消息提出具体观察，避免重复摘要、评价人格或把推测写成事实。模板省略的字段不要输出。'
+
+const commentaryFeedTemplate = feedTemplate.replace(
+  /<section class="report-section[^"\n]*\{\{(?:KEYWORDS|RESOURCES|ACTIONS|REVERSALS|CHAINS)_EMPTY_CLASS\}\}"[^>]*>[\s\S]*?<\/section>|<section class="report-section section-analytics-heat[^"]*"[^>]*>[\s\S]*?<\/section>/g,
+  '',
+)
+
 type Entry = Record<string, unknown>
 const object = (value: unknown): Entry => value && typeof value === 'object' && !Array.isArray(value) ? value as Entry : {}
 const text = (value: unknown) => typeof value === 'string' ? value.trim() : ''
@@ -941,12 +955,13 @@ const entries = (value: unknown): Entry[] => Array.isArray(value) ? value.map(ob
 const strings = (value: unknown): string[] => Array.isArray(value) ? value.map(text).filter(Boolean) : []
 const escape = (value: unknown) => text(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!)
 
-export function parseReportFeed(content: string): Entry {
+export function parseReportFeed(content: string, withCommentary = false): Entry {
   let parsed: unknown
   try { parsed = JSON.parse(content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')) }
   catch { throw new Error('日报结构无效：模型未返回有效 JSON') }
   const data = object(parsed)
   if (!text(object(data.hero).summary) || !Array.isArray(data.topics)) throw new Error('日报结构无效：缺少摘要或话题列表')
+  if (withCommentary && entries(data.topics).some(topic => !text(topic.aiComment))) throw new Error('日报结构无效：话题缺少 AI 评论')
   for (const key of ['resources', 'importantMessages', 'quotes', 'qa', 'todos', 'unresolved', 'storylines', 'reversals', 'participantChains', 'keywords']) {
     if (data[key] !== undefined && !Array.isArray(data[key])) throw new Error(`日报结构无效：${key} 应为列表`)
   }
@@ -969,7 +984,7 @@ interface FeedDocument {
   warnings: string[]
 }
 
-export function renderReportFeed(data: Entry, document: FeedDocument): string {
+export function renderReportFeed(data: Entry, document: FeedDocument, withCommentary = false): string {
   const hero = object(data.hero)
   const authors = new Map((document.messageAuthors ?? []).map(author => [author.reference, author.key]))
   const sources = new Map((document.sourceMessages ?? []).map(message => [message.reference, message]))
@@ -1003,7 +1018,10 @@ export function renderReportFeed(data: Entry, document: FeedDocument): string {
     const max = Math.max(1, ...topics.map(item => references(item).length))
     const ratio = refs.length / max
     const heat = ratio >= .67 ? '高' : ratio >= .34 ? '中' : '低'
-    return `<article class="topic-card"><div class="topic-title-row"><h3>${escape(topic.title)}</h3><span class="heat ${heat === '高' ? 'hot' : heat === '中' ? 'blue' : ''}" title="按引用消息数相对计算">${heat}热</span></div><div class="topic-meta">${escape(topicTime)}</div><p>${escape(topic.summary)}</p>${conclusions.length ? `<div class="topic-conclusions">${conclusions.map(value => `<div class="topic-conclusion">${escape(value)}</div>`).join('')}</div>` : ''}<div class="participants">${participants.slice(0, 8).map(chip).join('')}</div><div class="keywords">${strings(topic.keywords).slice(0, 6).map(value => `<span>${escape(value)}</span>`).join('')}</div></article>`
+    const topicExtras = withCommentary
+      ? `<div class="topic-conclusion"><strong>AI 评论</strong> · ${escape(topic.aiComment)}</div>`
+      : `<div class="keywords">${strings(topic.keywords).slice(0, 6).map(value => `<span>${escape(value)}</span>`).join('')}</div>`
+    return `<article class="topic-card"><div class="topic-title-row"><h3>${escape(topic.title)}</h3><span class="heat ${heat === '高' ? 'hot' : heat === '中' ? 'blue' : ''}" title="按引用消息数相对计算">${heat}热</span></div><div class="topic-meta">${escape(topicTime)}</div><p>${escape(topic.summary)}</p>${conclusions.length ? `<div class="topic-conclusions">${conclusions.map(value => `<div class="topic-conclusion">${escape(value)}</div>`).join('')}</div>` : ''}<div class="participants">${participants.slice(0, 8).map(chip).join('')}</div>${topicExtras}</article>`
   }).join('')
   const important = candidates('importantMessages', policy.maxImportant).map(item => {
     const source = references(item).map(id => sources.get(id)).find(Boolean)
@@ -1058,8 +1076,14 @@ export function renderReportFeed(data: Entry, document: FeedDocument): string {
     GENERATED_AT: escape(new Date().toLocaleString('zh-CN')),
   }
   for (const [key, value] of Object.entries({ TOPICS: topicCards, MESSAGES: important, QUOTES: quotes, QA: qa, ACTIONS: todos + unresolved, RESOURCES: resources, ANALYTICS: rank, KEYWORDS: keywords, STORYLINES: storylines, REVERSALS: reversals, CHAINS: chains, VISION: '', VOICE: '', VOICE_RANK: '', BADGES: '', HERO_STATUS: fields.HERO_STATUS_LINE, HERO_TAKEAWAY: fields.HERO_TAKEAWAY, HERO_PENDING: fields.HERO_PENDING })) fields[`${key}_EMPTY_CLASS`] = value ? '' : 'empty-section'
+  if (withCommentary) {
+    fields.HERO_STATUS_LINE = topics.length ? `${topics.length} 个话题` : ''
+    fields.HERO_PENDING = ''
+    fields.HERO_PENDING_EMPTY_CLASS = 'empty-section'
+    fields.HERO_STATUS_EMPTY_CLASS = topics.length ? '' : 'empty-section'
+  }
   // One substitution pass prevents content containing {{...}} from becoming template markup.
-  return feedTemplate.replace(/\{\{([A-Z_]+)\}\}/g, (_, key: string) => fields[key] ?? '')
+  return (withCommentary ? commentaryFeedTemplate : feedTemplate).replace(/\{\{([A-Z_]+)\}\}/g, (_, key: string) => fields[key] ?? '')
 }
 
 // Re-read original evidence when a long report has collapsed a topic into a label.

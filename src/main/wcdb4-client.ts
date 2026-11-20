@@ -524,7 +524,7 @@ export class Wcdb4Client {
       if (!Array.isArray(rows)) throw new Error('聊天索引读取格式无效')
       return rows as Record<string, unknown>[]
     }
-    const schemas = new Map<string, { id: string; time: string; type: string; content?: string; join: string }>()
+    const schemas = new Map<string, { id: string; time: string; type: string; content?: string; serverId?: string; join: string }>()
     const schema = (store: IndexStore) => {
       const cached = schemas.get(store.id)
       if (cached) return cached
@@ -544,7 +544,8 @@ export class Wcdb4Client {
           if (name) join += `|n.${quote(name)}`
         }
       }
-      const result = { id, time, type, content: pick(['message_content', 'messageContent', 'content', 'msg_content']), join }
+      const serverId = pick(['server_id', 'serverId', 'msg_svr_id', 'msgSvrId', 'mesSvrID'])
+      const result = { id, time, type, serverId, content: pick(['message_content', 'messageContent', 'content', 'msg_content']), join }
       schemas.set(store.id, result)
       return result
     }
@@ -587,7 +588,8 @@ export class Wcdb4Client {
       page: (store, after, through, limit) => {
         const columns = schema(store)
         const [join = '', sender = ''] = columns.join.split('|')
-        const rows = sql(store.dbPath, `SELECT m.*${sender ? `, ${sender} AS sender_username` : ''} FROM ${quote(store.tableName)} AS m${join} WHERE m.${quote(columns.id)}>${after} AND m.${quote(columns.id)}<=${through} ORDER BY m.${quote(columns.id)} LIMIT ${limit}`)
+        const serverId = columns.serverId ? `, CAST(m.${quote(columns.serverId)} AS TEXT) AS exact_server_id` : ''
+        const rows = sql(store.dbPath, `SELECT m.*${serverId}${sender ? `, ${sender} AS sender_username` : ''} FROM ${quote(store.tableName)} AS m${join} WHERE m.${quote(columns.id)}>${after} AND m.${quote(columns.id)}<=${through} ORDER BY m.${quote(columns.id)} LIMIT ${limit}`)
         return this.normalizeMessages(rows, store.room, limit)
       },
     }
@@ -695,7 +697,7 @@ export class Wcdb4Client {
           content: groupContent.content,
           isSend,
           sender,
-          serverId: text(row, ['server_id', 'serverId', 'msg_svr_id', 'msgSvrId', 'mesSvrID']),
+          serverId: text(row, ['exact_server_id', 'server_id', 'serverId', 'msg_svr_id', 'msgSvrId', 'mesSvrID']),
           imageFileHash: metadataOnly ? undefined : packedImageHash(value(row, ['packed_info_data', 'packedInfoData', 'packed_info', 'BytesExtra', 'WCDB_CT_packed_info_data', 'WCDB_CT_packed_info'])),
         }
       })

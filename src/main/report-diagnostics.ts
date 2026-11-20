@@ -5,7 +5,7 @@ import type { GenerateReportInput, ReportProgress } from '../shared/types'
 export function reportFailureAdvice(detail: string): string {
   if (/401|403|密钥|认证/.test(detail)) return '在设置中检查该模型的密钥、模型名称及调用权限，并使用连接测试。'
   if (/429|额度|余额|限流/.test(detail)) return '检查模型服务余额、套餐额度或请求频率，稍后重试。'
-  if (/长度限制|摘要过长|context|token|上下文/i.test(detail)) return '缩小日期范围或选择简洁风格；也可更换支持更长输出的模型。'
+  if (/长度限制|摘要过长|context|token|上下文/i.test(detail)) return '请缩小日期范围，或更换支持更长输出的模型。'
   if (/超时|Timeout|网络|fetch failed|ECONN|ENOTFOUND/i.test(detail)) return '检查网络和模型服务连接；可先选择一天的消息重试。语音缓存会保留。'
   if (/图片|图像/.test(detail)) return '检查图片理解模型配置；可取消图片选项后重试。'
   if (/索引|快照|会话|消息/.test(detail)) return '重新选择会话以刷新记录，再确认日期范围和内容选项。'

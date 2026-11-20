@@ -5,7 +5,7 @@ import { conversationCacheAllowed } from './conversation-cache-policy'
 import { configureConversationCachePolicy } from './conversation-cache-policy'
 import { join } from 'node:path'
 import { configureWcdbPaths, testDatabaseConnection } from './wcdb4-client'
-import { invalidateSyncMedia, readOriginalImage, applyWechatCacheExclusions, queryStickerCdnUrl, queryGroupMonitor, readWechatProfileEvidence, listWechatGroupMembers, listWechatConversationOptions, loadReportParticipantProfiles, searchWechatChatIndex, readIndexedConversation, controlWechatChatIndex, prepareWechatReportMedia, queryWechatConversationSummary, queryWechatSpeechStats, queryWechatReportMessages, syncWechatRecords } from './wechat-records'
+import { exportWechatConversation, invalidateSyncMedia, readOriginalImage, applyWechatCacheExclusions, queryStickerCdnUrl, queryGroupMonitor, readWechatProfileEvidence, loadWechatProfileAvatars, listWechatGroupMembers, listWechatConversationOptions, loadReportParticipantProfiles, searchWechatChatIndex, readIndexedConversation, controlWechatChatIndex, prepareWechatReportMedia, queryWechatConversationSummary, queryWechatSpeechStats, queryWechatReportMessages, syncWechatRecords } from './wechat-records'
 import { onImagePreview, readImagePreview } from './image-preview-cache'
 import type { RecordsCommand, RecordsEvent } from '../shared/records-process'
 import { chatIndexErrorMessage } from '../shared/chat-index'
@@ -48,6 +48,8 @@ port.on('message', ({ data }: { data: RecordsCommand }) => {
       send({ type: 'result', id: data.id })
     } else if (data.type === 'profile-evidence') {
       send({ type: 'result', id: data.id, result: readWechatProfileEvidence(chatDirectory(), data.account, data.key, data.conversationId, data.memberId, data.query) })
+    } else if (data.type === 'profile-avatars') {
+      send({ type: 'result', id: data.id, result: loadWechatProfileAvatars(data.account, data.key, data.userIds) })
     } else if (data.type === 'group-members') {
       send({ type: 'result', id: data.id, result: listWechatGroupMembers(data.account, data.key, data.conversationId) })
     } else if (data.type === 'conversation-options') {
@@ -56,6 +58,8 @@ port.on('message', ({ data }: { data: RecordsCommand }) => {
       send({ type: 'result', id: data.id, result: queryStickerCdnUrl(data.account, data.key, data.md5) })
     } else if (data.type === 'group-monitor') {
       send({ type: 'result', id: data.id, result: queryGroupMonitor(join(statsPath, '..', 'group-monitor'), data.account, data.key, data.query) })
+    } else if (data.type === 'export') {
+      send({ type: 'result', id: data.id, result: exportWechatConversation(data.account, data.key, data.query) })
     } else if (data.type === 'sync') {
       send({ type: 'result', id: data.id, result: syncWechatRecords(data.account, data.key, chatDirectory()) })
     } else if (data.type === 'conversation-summary') {

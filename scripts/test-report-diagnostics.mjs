@@ -12,7 +12,7 @@ try {
   assert.ok(!/SECRET|PRIVATE_GROUP|PRIVATE_CHAT/.test(text))
   assert.equal(text.trim().split('\n').length, 2)
   assert.equal(fs.statSync(log.path).mode & 0o777, 0o600)
-  assert.match(reportFailureAdvice('模型输出达到长度限制'), /简洁风格/)
+  assert.match(reportFailureAdvice('模型输出达到长度限制'), /缩小日期范围/)
   assert.match(reportFailureAdvice('HTTP 429'), /额度/)
   assert.match(reportFailureAdvice('模型请求超时'), /网络/)
   const file = path.join(directory, 'file'); fs.writeFileSync(file, '')

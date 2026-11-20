@@ -1,10 +1,27 @@
+import { personProfileTargetKey } from '../shared/person-profile'
+import { personProfileTaskTitle } from '../shared/task-center'
+import { aiTaskProgress, cancelProcessingTask, downloadTaskProgress, onProcessingTasks, reportTaskProgress, retryProcessingTask, trackTask } from './task-center'
+import { defaultReportTemplates } from '../shared/report-templates'
 import type { ChatIndexSearchQuery, ChatIndexSearchResponse, IndexedConversationQuery, IndexedConversationResponse, ChatIndexQuery, ChatIndexResponse } from '../shared/chat-index'
 import type { ConversationIndexQuery, ConversationIndexResponse, SpeechStatsQuery, SpeechStatsResponse } from '../shared/types'
 import type { ReportWritingStyle, SaveReportStyleInput } from '../shared/report-styles'
 import { contextBridge, ipcRenderer } from 'electron'
 import type { ReportConversationQuery, ReportConversationResponse, GenerateReportInput, GenerateReportResponse, ReportProgress, DetectResult, FetchKeyResponse, KeyStatus, ModelConfig, ReportMessagesQuery, ReportMessagesResponse, SaveModelConfigInput, SyncResponse, VoiceModelDownloadResult, VoiceModelStatus, WechatAccount } from '../shared/types'
 
+function generatePersonProfile(input: import('../shared/person-profile').GeneratePersonProfileInput): Promise<import('../shared/person-profile').PersonProfileResponse> {
+  return trackTask(personProfileTaskTitle, () => ipcRenderer.invoke('profile:generate', input), {
+    subject: input.name,
+    subjectKey: personProfileTargetKey(input.target),
+    progress: aiTaskProgress(input.requestId),
+    cancel: () => ipcRenderer.invoke('ai:cancel', input.requestId),
+    retry: () => generatePersonProfile({ ...input, requestId: crypto.randomUUID() }),
+  })
+}
+
 const api = {
+  onProcessingTasks,
+  retryProcessingTask,
+  cancelProcessingTask,
   getOriginalImage: (query: import('../shared/types').OriginalImageQuery): Promise<import('../shared/types').OriginalImageResponse> => ipcRenderer.invoke('wechat:original-image', query),
   saveRetainedFile: (input: import('../shared/types').SaveRetainedFileInput): Promise<import('../shared/types').SaveRetainedFileResponse> => ipcRenderer.invoke('wechat:save-retained-file', input),
   scheduledMessages: (root: string, action: import('../shared/scheduled-messages').SendTaskAction): Promise<import('../shared/scheduled-messages').SendTaskResponse> => ipcRenderer.invoke('messages:schedule', root, action),
@@ -15,9 +32,17 @@ const api = {
   transcribeVoiceMessage: (query: import('../shared/types').VoiceMessageQuery): Promise<import('../shared/types').VoiceMessageResponse> => ipcRenderer.invoke('wechat:voice-transcribe', query),
   resolveSticker: (query: import('../shared/sticker').StickerQuery): Promise<import('../shared/sticker').StickerResponse> => ipcRenderer.invoke('wechat:sticker', query),
   groupMonitor: (query: import('../shared/group-monitor').MonitorQuery): Promise<import('../shared/group-monitor').MonitorResponse> => ipcRenderer.invoke('wechat:group-monitor', query),
-  generatePersonProfile: (input: import('../shared/person-profile').GeneratePersonProfileInput): Promise<import('../shared/person-profile').PersonProfileResponse> => ipcRenderer.invoke('profile:generate', input),
+  generatePersonProfile,
+  onPersonProfileSaved: (callback: (record: import('../shared/person-profile').SavedPersonProfile) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, record: import('../shared/person-profile').SavedPersonProfile) => callback(record)
+    ipcRenderer.on('profile:saved', listener)
+    return () => ipcRenderer.removeListener('profile:saved', listener)
+  },
   listPersonProfiles: (root: string): Promise<import('../shared/person-profile').ListPersonProfilesResponse> => ipcRenderer.invoke('profile:list', root),
+  listPersonProfileAvatars: (root: string, userIds: string[]): Promise<import('../shared/person-profile').ProfileAvatar[]> =>
+    ipcRenderer.invoke('profile:avatars', root, userIds),
   editPersonProfile: (input: import('../shared/person-profile').EditPersonProfileInput): Promise<import('../shared/person-profile').PersonProfileResponse> => ipcRenderer.invoke('profile:edit', input),
+  exportChat: (query: import('../shared/chat-export').ChatExportQuery): Promise<import('../shared/chat-export').ChatExportResponse> => ipcRenderer.invoke('wechat:export-chat', query),
   listGroupMembers: (query: ConversationIndexQuery): Promise<import('../shared/types').GroupMembersResponse> => ipcRenderer.invoke('wechat:group-members', query),
   listConversationOptions: (root?: string, textOnly?: boolean): Promise<import('../shared/types').ConversationOptionsResponse> => ipcRenderer.invoke('wechat:conversation-options', root, textOnly),
   loadAiPrompts: (): Promise<import('../shared/ai-prompt-settings').AiPromptSettingsResponse> => ipcRenderer.invoke('ai:prompts-load'),
@@ -36,7 +61,7 @@ const api = {
     ipcRenderer.on('ai:delta', listener)
     return () => ipcRenderer.removeListener('ai:delta', listener)
   },
-  askAi: (input: import('../shared/ai-chat').AiChatInput): Promise<import('../shared/ai-chat').AiChatResponse> => ipcRenderer.invoke('ai:chat', input),
+  askAi: (input: import('../shared/ai-chat').AiChatInput): Promise<import('../shared/ai-chat').AiChatResponse> => trackTask('AI 对话', () => ipcRenderer.invoke('ai:chat', input), { progress: aiTaskProgress(input.requestId) }),
   getAppInfo: (): Promise<{ version: string; platform: string }> =>
     ipcRenderer.invoke('app:get-info'),
   selectDirectory: (title?: string): Promise<string | null> => ipcRenderer.invoke('dialog:select-directory', title),
@@ -61,7 +86,7 @@ const api = {
   saveReportStyle: (input: SaveReportStyleInput): Promise<ReportWritingStyle> => ipcRenderer.invoke('report-style:save', input),
   deleteReportStyle: (id: string): Promise<ReportWritingStyle[]> => ipcRenderer.invoke('report-style:delete', id),
   loadReportConversation: (query: ReportConversationQuery): Promise<ReportConversationResponse> => ipcRenderer.invoke('report:load-conversation', query),
-  generateReport: (input: GenerateReportInput): Promise<GenerateReportResponse> => ipcRenderer.invoke('report:generate', input),
+  generateReport: (input: GenerateReportInput): Promise<GenerateReportResponse> => trackTask(defaultReportTemplates.find(template => template.id === input.templateId)?.layout === 'daily' ? '日报生成' : '报告生成', () => ipcRenderer.invoke('report:generate', input), { subject: input.conversationName, progress: reportTaskProgress(input.requestId) }),
   listReports: (): Promise<import('../shared/types').ReportHistoryItem[]> => ipcRenderer.invoke('report:list'),
   revealReport: (file: string): Promise<void> => ipcRenderer.invoke('report:reveal', file),
   copyReportImages: (files: string[]): Promise<void> => ipcRenderer.invoke('report:copy-image', files),
@@ -91,7 +116,7 @@ const api = {
   testModelConfig: (input: SaveModelConfigInput): Promise<{ latencyMs: number }> => ipcRenderer.invoke('model:test', input),
   openModelDirectory: (id: string): Promise<void> => ipcRenderer.invoke('model:open-directory', id),
   getVoiceModelStatus: (): Promise<VoiceModelStatus> => ipcRenderer.invoke('voice-model:status'),
-  downloadVoiceModel: (): Promise<VoiceModelDownloadResult> => ipcRenderer.invoke('voice-model:download'),
+  downloadVoiceModel: (): Promise<VoiceModelDownloadResult> => trackTask('语音模型下载', () => ipcRenderer.invoke('voice-model:download'), { progress: downloadTaskProgress }),
   cancelVoiceModelDownload: (): Promise<boolean> => ipcRenderer.invoke('voice-model:cancel'),
   removeVoiceModel: (): Promise<VoiceModelStatus> => ipcRenderer.invoke('voice-model:remove'),
   openVoiceModelDirectory: (): Promise<void> => ipcRenderer.invoke('voice-model:open-directory'),

@@ -1,4 +1,5 @@
 import { resolveWechatCompatibility } from '../shared/wechat-compatibility'
+import { conversationCacheAllowed } from './conversation-cache-policy'
 import { getCacheDirectory } from './cache-path'
 import { windowsNativeResources } from './native-resources'
 import { defaultWechatRoot, wechatPlatformSupport } from './wechat-platform'
@@ -27,7 +28,7 @@ import {
 } from './database-key-store'
 import { captureAccountKey, wechatVersion } from './key-capture'
 import { sipEnabled } from './security'
-import { runOriginalImage, runStickerUrl, runGroupMonitor, runProfileEvidence, runGroupMembers, runConversationOptions, loadImagePreview, runReportParticipantProfiles, runIndexSearch, runIndexedConversation, runWechatChatIndex, runWechatConversationSummary, runWechatSpeechQuery, runWechatReportMedia, runWechatReportQuery, runWechatSync, validateWechatDatabase } from './wechat-background'
+import { runChatExport, runOriginalImage, runStickerUrl, runGroupMonitor, createProfileEvidenceReader, runProfileAvatars, runGroupMembers, runConversationOptions, loadImagePreview, runReportParticipantProfiles, runIndexSearch, runIndexedConversation, runWechatChatIndex, runWechatConversationSummary, runWechatSpeechQuery, runWechatReportMedia, runWechatReportQuery, runWechatSync, validateWechatDatabase } from './wechat-background'
 
 export type { DetectResult, SyncConversation, SyncMessage, SyncResult, WechatAccount }
 
@@ -259,9 +260,30 @@ export function createPersonProfileReader(target: import('../shared/person-profi
   if (typeof room !== 'string' || !room || room.endsWith('@chatroom') !== (target.kind === 'group-member')
     || typeof member !== 'string' || !member) throw new Error('请选择有效的画像对象')
   const account = requireAccount(target.root)
+  if (!conversationCacheAllowed(account.root, room)) throw new Error('该会话已排除索引，无法生成画像')
   const stored = loadDatabaseKey(account.root)
   if (!stored) throw new Error('请先获取数据库密钥')
-  return (query: import('../shared/person-profile').ProfilePageQuery) => runProfileEvidence(account, stored.key, room, member, query)
+  return createProfileEvidenceReader(account, stored.key, room, member)
+}
+
+export async function listPersonProfileAvatars(root: string, userIds: string[]): Promise<import('../shared/person-profile').ProfileAvatar[]> {
+  if (typeof root !== 'string' || !root || !Array.isArray(userIds) || !userIds.length) return []
+  const account = requireAccount(root)
+  const stored = loadDatabaseKey(account.root)
+  if (!stored) return []
+  const ids = [...new Set(userIds.filter(id => typeof id === 'string' && id.length > 0 && id.length <= 256))]
+  const avatars: import('../shared/person-profile').ProfileAvatar[] = []
+  for (let offset = 0; offset < ids.length; offset += 50) {
+    avatars.push(...await runProfileAvatars(account, stored.key, ids.slice(offset, offset + 50)))
+  }
+  return avatars
+}
+
+export async function exportChat(query: import('../shared/chat-export').ChatExportQuery) {
+  const account = requireAccount(query.root)
+  const stored = loadDatabaseKey(account.root)
+  if (!stored) throw new Error('请先获取数据库密钥')
+  return runChatExport(account, stored.key, query)
 }
 
 export async function listGroupMembers(query: ConversationIndexQuery): Promise<import('../shared/types').GroupMember[]> {

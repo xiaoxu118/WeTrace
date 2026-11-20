@@ -1,18 +1,14 @@
 import { ProfilePersonSelect, profilePersonChoices } from './ProfilePersonSelect'
 import { Alert, Avatar, Button, Card, Drawer, Empty, Input, Segmented, Space, Table, Typography } from 'antd'
 import { ActionButton } from './ui/ActionButton'
-import { useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { personProfileTaskTitle } from '../../../shared/task-center'
 import type { EditPersonProfileInput, GeneratePersonProfileInput, PersonProfileTarget, SavedPersonProfile } from '../../../shared/person-profile'
-import { profileCategories, profileSectionText } from '../../../shared/person-profile'
+import { personProfileTargetKey, profileCategories, profileSectionText } from '../../../shared/person-profile'
 import type { ConversationOption, ConversationOptionsResponse, GroupMembersResponse } from '../../../shared/types'
 import { firstGrapheme, SafeText } from './SafeText'
 
 type ProfileCategory = '联系人' | '群成员'
-
-type ProfileJob = { id: string; name: string; detail: string; cancelling?: boolean }
-type ProfileJobResult = { status: 'saved' | 'cancelled' | 'failed'; name: string; detail: string }
-const jobResultTitles = { saved: '画像已保存', cancelled: '画像更新已取消', failed: '画像更新失败' }
 
 function sourceName(item: SavedPersonProfile) {
   return item.target.kind === 'contact' ? '私聊' : item.groupName ?? '群聊'
@@ -23,8 +19,8 @@ function observationCategories(item: SavedPersonProfile) {
     || item.profile.observations.some(observation => (observation.category ?? '其他') === category))
 }
 
-function profileKey(target: PersonProfileTarget) {
-  return JSON.stringify(target.kind === 'contact' ? [target.contactId] : [target.groupId, target.memberId])
+function profilePersonId(target: PersonProfileTarget) {
+  return target.kind === 'contact' ? target.contactId : target.memberId
 }
 
 export function Profiles({ root, recentConversations, visible }: {
@@ -35,6 +31,9 @@ export function Profiles({ root, recentConversations, visible }: {
   const [catalogAttempt, retryCatalog] = useState(0)
   const [membersAttempt, retryMembers] = useState(0)
   const [profiles, setProfiles] = useState(new Map<string, SavedPersonProfile>())
+  const [profileAvatars, setProfileAvatars] = useState<{ root: string; avatars: Map<string, string> }>()
+  const accountProfiles = useMemo(() => [...profiles.values()].filter(item => item.target.root === root), [profiles, root])
+  const avatarIds = useMemo(() => [...new Set(accountProfiles.map(item => profilePersonId(item.target)))], [accountProfiles])
   const [selectedProfile, setSelectedProfile] = useState<string>()
   const [profileOpen, setProfileOpen] = useState(false)
   const [search, setSearch] = useState('')
@@ -43,12 +42,17 @@ export function Profiles({ root, recentConversations, visible }: {
   const [edit, setEdit] = useState<EditPersonProfileInput>()
   const [editError, setEditError] = useState('')
   const [saving, setSaving] = useState(false)
-  const [job, setJob] = useState<ProfileJob>()
-  const jobRef = useRef<string | undefined>(undefined)
-  const [jobResult, setJobResult] = useState<ProfileJobResult>()
+  const submittingRef = useRef(new Set<string>())
+  const [submittingTargets, setSubmittingTargets] = useState(new Set<string>())
+  const [runningTargets, setRunningTargets] = useState(new Set<string>())
   const [visited, setVisited] = useState(visible)
 
   useEffect(() => { if (visible) setVisited(true) }, [visible])
+  useEffect(() => window.wetrace.onPersonProfileSaved?.(record => {
+    if (record.target.root !== root) return
+    const key = personProfileTargetKey(record.target)
+    setProfiles(current => new Map(current).set(key, record))
+  }), [root])
   useEffect(() => {
     if (!root || !visited) return
     let active = true
@@ -58,7 +62,7 @@ export function Profiles({ root, recentConversations, visible }: {
       setProfiles(current => {
         const merged = new Map(current)
         for (const record of result.records) {
-          const key = profileKey(record.target)
+          const key = personProfileTargetKey(record.target)
           if ((merged.get(key)?.updatedAt ?? 0) <= record.updatedAt) merged.set(key, record)
         }
         return merged
@@ -69,15 +73,17 @@ export function Profiles({ root, recentConversations, visible }: {
     return () => { active = false }
   }, [root, visited, archiveAttempt])
   useEffect(() => {
-    const unsubscribe = window.wetrace.onAiProgress?.(({ requestId, detail }) => {
-      setJob(current => current?.id === requestId ? { ...current, detail } : current)
-    })
-    return () => {
-      unsubscribe?.()
-      if (jobRef.current) void window.wetrace.cancelAi(jobRef.current).catch(() => undefined)
-      jobRef.current = undefined
-    }
-  }, [])
+    if (!root || !visible || !avatarIds.length) return
+    let active = true
+    void window.wetrace.listPersonProfileAvatars(root, avatarIds).then(result => {
+      if (active) setProfileAvatars({ root, avatars: new Map(result.map(({ id, avatar }) => [id, avatar])) })
+    }).catch(() => { /* Names remain available when avatars cannot be loaded. */ })
+    return () => { active = false }
+  }, [root, visible, avatarIds])
+  useEffect(() => window.wetrace.onProcessingTasks?.(tasks => {
+    setRunningTargets(new Set(tasks.flatMap(task => task.title === personProfileTaskTitle &&
+      task.state === 'running' && task.subjectKey ? [task.subjectKey] : [])))
+  }), [])
   const [category, setCategory] = useState<ProfileCategory>('联系人')
   const [conversations, setConversations] = useState<ConversationOptionsResponse>()
   const [contactId, setContactId] = useState<string>()
@@ -107,21 +113,7 @@ export function Profiles({ root, recentConversations, visible }: {
     return () => { current = false }
   }, [root, groupId, membersAttempt])
 
-  const jobStatus = job || jobResult ? createPortal(
-    <div className="profile-job-status" data-status={job ? 'running' : jobResult?.status} aria-label="画像更新状态">
-      <div className="profile-job-status-text" role={jobResult?.status === 'failed' ? 'alert' : 'status'}>
-        <Typography.Text strong>{job ? '正在更新画像' : jobResult && jobResultTitles[jobResult.status]}</Typography.Text>
-        <Typography.Text type="secondary"><SafeText>{job?.name ?? jobResult?.name ?? ''}</SafeText></Typography.Text>
-        <Typography.Text>{job ? (job.cancelling ? '正在取消…' : job.detail) : jobResult?.detail}</Typography.Text>
-      </div>
-      {job
-        ? <ActionButton className="sm" disabled={job.cancelling} onClick={() => void cancelProfileUpdate(job.id)}>取消</ActionButton>
-        : <ActionButton className="sm" onClick={() => setJobResult(undefined)}>关闭</ActionButton>}
-    </div>,
-    document.body,
-  ) : null
-
-  if (!visible) return jobStatus
+  if (!visible) return null
 
   const recentById = new Map(recentConversations?.map(item => [item.id, item]))
   const options = conversations?.ok
@@ -143,12 +135,13 @@ export function Profiles({ root, recentConversations, visible }: {
       : group && { kind: 'group-member', root, groupId: group.id, memberId: person.id }
     : undefined
 
-  const targetKey = selectedProfile ?? (updateTarget ? profileKey(updateTarget) : '')
-  const record = profiles.get(targetKey)
+  const targetKey = selectedProfile ?? (updateTarget ? personProfileTargetKey(updateTarget) : '')
+  const candidate = profiles.get(targetKey)
+  const record = candidate?.target.root === root ? candidate : undefined
   const profile = record?.profile
   const sections = profile && profileSectionText(profile)
   const searchTerms = search.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)
-  const matchingProfiles = [...profiles.values()].filter(item => {
+  const matchingProfiles = accountProfiles.filter(item => {
     const categories = observationCategories(item)
     const content = [item.name, sourceName(item), ...categories,
       ...item.profile.observations.map(({ detail }) => detail)].join('\n').toLocaleLowerCase()
@@ -156,43 +149,23 @@ export function Profiles({ root, recentConversations, visible }: {
   }).sort((a, b) => b.updatedAt - a.updatedAt)
   const generationTarget = selectedProfile ? record?.target : updateTarget
   const generationName = record?.name ?? personName
+  const updating = (key: string) => submittingTargets.has(key) || runningTargets.has(key)
   const groupName = generationTarget?.kind === 'group-member'
     ? record?.groupName ?? (group && (group.name === group.id ? '未命名群聊' : group.name))
     : undefined
 
   async function requestProfileUpdate(input: Omit<GeneratePersonProfileInput, 'requestId'>) {
-    if (jobRef.current) return
-    const id = crypto.randomUUID()
-    const key = profileKey(input.target)
-    jobRef.current = id
-    setJobResult(undefined)
-    setJob({ id, name: input.name, detail: '正在读取聊天记录…' })
+    const key = personProfileTargetKey(input.target)
+    if (submittingRef.current.has(key) || runningTargets.has(key)) return
+    submittingRef.current.add(key)
+    setSubmittingTargets(new Set(submittingRef.current))
     try {
-      const result = await window.wetrace.generatePersonProfile({ ...input, requestId: id })
-      if (jobRef.current !== id) return
-      if (!result.ok) {
-        setJobResult({ status: result.cancelled ? 'cancelled' : 'failed', name: input.name,
-          detail: result.cancelled ? '本次更新未保存' : result.error })
-        return
-      }
-      setProfiles(current => new Map(current).set(key, result.record))
-      setJobResult({ status: 'saved', name: result.record.name, detail: '可在画像列表查看' })
-    } catch (error) {
-      if (jobRef.current === id) setJobResult({ status: 'failed', name: input.name,
-        detail: error instanceof Error ? error.message : '请重试' })
-    } finally {
-      if (jobRef.current === id) {
-        jobRef.current = undefined
-        setJob(undefined)
-      }
-    }
-  }
-
-  async function cancelProfileUpdate(id: string) {
-    setJob(current => current?.id === id ? { ...current, cancelling: true } : current)
-    try { await window.wetrace.cancelAi(id) }
-    catch {
-      setJob(current => current?.id === id ? { ...current, cancelling: false, detail: '取消失败，可重试' } : current)
+      const result = await window.wetrace.generatePersonProfile({ ...input, requestId: crypto.randomUUID() })
+      if (result.ok) setProfiles(current => new Map(current).set(key, result.record))
+    } catch { /* The task center displays generation failures. */ }
+    finally {
+      submittingRef.current.delete(key)
+      setSubmittingTargets(new Set(submittingRef.current))
     }
   }
 
@@ -201,7 +174,7 @@ export function Profiles({ root, recentConversations, visible }: {
   }
 
   function viewProfile(item: SavedPersonProfile) {
-    setSelectedProfile(profileKey(item.target))
+    setSelectedProfile(personProfileTargetKey(item.target))
     setCategory(item.target.kind === 'contact' ? '联系人' : '群成员')
     setContactId(undefined)
     setGroupId(undefined)
@@ -223,7 +196,7 @@ export function Profiles({ root, recentConversations, visible }: {
     try {
       const result = await window.wetrace.editPersonProfile(edit)
       if (!result.ok) throw new Error(result.error)
-      setProfiles(current => new Map(current).set(profileKey(result.record.target), result.record))
+      setProfiles(current => new Map(current).set(personProfileTargetKey(result.record.target), result.record))
       setEdit(undefined)
     } catch (error) {
       setEditError(error instanceof Error ? error.message : '保存画像失败')
@@ -234,10 +207,10 @@ export function Profiles({ root, recentConversations, visible }: {
     <section className="view active profiles-view" aria-label="画像">
       <Space align="center" size={12}>
         <Typography.Title level={3} style={{ margin: 0 }}>画像</Typography.Title>
-        <ActionButton className="btn primary" disabled={!generationTarget || !generationName || Boolean(job)} onClick={() => {
+        <ActionButton className="btn primary" disabled={!generationTarget || !generationName || updating(targetKey)} onClick={() => {
           if (generationTarget && generationName) void requestProfileUpdate({ target: generationTarget, name: generationName, groupName })
         }}>
-          {job ? '更新中…' : '更新画像'}
+          {updating(targetKey) ? '更新中…' : '更新画像'}
         </ActionButton>
       </Space>
       <Segmented<ProfileCategory> options={['联系人', '群成员']} value={category} onChange={value => { setCategory(value); changeSelection() }} />
@@ -290,7 +263,6 @@ export function Profiles({ root, recentConversations, visible }: {
           </Space>
         </Space>
       )}
-      {jobStatus}
       {root && <section className="profile-list" aria-labelledby="profile-list-heading">
         <div className="profile-list-toolbar">
           <Typography.Title id="profile-list-heading" level={4}>画像列表</Typography.Title>
@@ -310,14 +282,16 @@ export function Profiles({ root, recentConversations, visible }: {
           locale={{ emptyText: searchTerms.length ? '没有匹配的画像' : '暂无已保存的画像' }}
           rowClassName={item => record?.id === item.id ? 'profile-row-active' : ''}
           columns={[
-            { title: '人物', key: 'name', ellipsis: true, render: (_, item) => (
-              <div className="profile-table-person">
-                <Avatar size={34} src={recentById.get(item.target.kind === 'contact' ? item.target.contactId : item.target.memberId)?.avatar}>
-                  {firstGrapheme(item.name)}
-                </Avatar>
-                <span className="profile-table-name" title={item.name}><SafeText>{item.name}</SafeText></span>
-              </div>
-            ) },
+            { title: '人物', key: 'name', ellipsis: true, render: (_, item) => {
+              const id = profilePersonId(item.target)
+              const avatar = profileAvatars?.root === item.target.root ? profileAvatars.avatars.get(id) : undefined
+              return (
+                <div className="profile-table-person">
+                  <Avatar size={34} src={avatar ?? recentById.get(id)?.avatar}>{firstGrapheme(item.name)}</Avatar>
+                  <span className="profile-table-name" title={item.name}><SafeText>{item.name}</SafeText></span>
+                </div>
+              )
+            } },
             { title: '来源', key: 'source', width: '19%', ellipsis: true, render: (_, item) => (
               <span className="profile-table-source" title={sourceName(item)}><SafeText>{sourceName(item)}</SafeText></span>
             ) },
@@ -332,7 +306,7 @@ export function Profiles({ root, recentConversations, visible }: {
             { title: '操作', key: 'actions', width: 128, align: 'right', render: (_, item) => (
               <Space size={4}>
                 <Button type="link" size="small" aria-label={`查看画像 ${item.name}`} onClick={() => viewProfile(item)}>查看</Button>
-                <Button type="link" size="small" aria-label={`编辑画像 ${item.name}`} disabled={Boolean(job)} onClick={() => {
+                <Button type="link" size="small" aria-label={`编辑画像 ${item.name}`} disabled={updating(personProfileTargetKey(item.target))} onClick={() => {
                   viewProfile(item)
                   editProfile(item)
                 }}>编辑</Button>
@@ -356,7 +330,7 @@ export function Profiles({ root, recentConversations, visible }: {
               <Button type="primary" loading={saving} onClick={() => void saveEdit()}>保存</Button>
             </> : <>
               <Button onClick={() => setProfileOpen(false)}>关闭</Button>
-              <Button type="primary" disabled={!record || Boolean(job)}
+              <Button type="primary" disabled={!record || updating(targetKey)}
                 onClick={() => { if (record) editProfile(record) }}>编辑</Button>
             </>}
           </div>

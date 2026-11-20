@@ -1,4 +1,6 @@
-import type { ProfileMessagePage, ProfilePageQuery } from '../shared/person-profile'
+import type { ChatExportQuery } from '../shared/chat-export'
+import { serializeChatExport } from './chat-export'
+import type { ProfileAvatar, ProfileMessage, ProfileMessagePage, ProfilePageQuery } from '../shared/person-profile'
 import { SyncPresentationCache } from './sync-presentation-cache'
 import { refreshOriginalImage } from './recall-original-image'
 import { recoverCapturedAttachments } from './recall-attachment-recovery'
@@ -534,7 +536,7 @@ export function readWechatProfileEvidence(directory: string, account: WechatAcco
   if (!page) throw new Error('请先在「缓存与索引」中建立该会话的索引')
 
   const speakers = new Map<string, number>()
-  const textMessage = (row: WcdbMessage, sender: string): import('../shared/person-profile').ProfileMessage => {
+  const textMessage = (row: WcdbMessage, sender: string): ProfileMessage => {
     const target = sender === memberId || (!sender && !row.isSend && !conversationId.endsWith('@chatroom'))
     if (!target && !speakers.has(sender)) speakers.set(sender, speakers.size + 1)
     return {
@@ -543,16 +545,32 @@ export function readWechatProfileEvidence(directory: string, account: WechatAcco
       text: row.content,
     }
   }
+  const withQuote = (message: ProfileMessage, quotedText?: string): ProfileMessage[] =>
+    quotedText ? [{
+      id: `${message.id}:quote`, createdAt: message.createdAt,
+      target: false, speaker: -1, text: `引用内容：${quotedText}`,
+    }, message] : [message]
+  const nearbyMessage = (item: { message: WcdbMessage; sender: string; quotedText?: string }) =>
+    withQuote(textMessage(item.message, item.sender), item.quotedText)
   const clips = page.rows.map(window => {
     const anchor = textMessage(window.anchor, memberId)
     const messages = [
-      ...window.previous.map(item => textMessage(item.message, item.sender)),
-      anchor,
-      ...window.following.map(item => textMessage(item.message, item.sender)),
+      ...window.previous.flatMap(nearbyMessage),
+      ...withQuote(anchor, window.quotedText),
+      ...window.following.flatMap(nearbyMessage),
     ].filter(message => message.text)
-    return { anchor, messages, serverId: window.anchor.serverId }
+    return { anchor, messages, serverId: window.anchor.serverId, cursor: window.cursor }
   })
   return { snapshot: page.snapshot, next: page.next, clips }
+}
+
+export function loadWechatProfileAvatars(account: WechatAccount, key: string, userIds: string[]): ProfileAvatar[] {
+  const profiles = recordsClient(account, key).getProfiles(userIds)
+  return [...profiles].flatMap(([id, { avatar }]) => {
+    if (!avatar) return []
+    const source = avatar.replace(/^http:\/\/(?=(?:[a-z\d-]+\.)*(?:qlogo|qpic)\.cn\/)/i, 'https://')
+    return [{ id, avatar: source }]
+  })
 }
 
 export function listWechatGroupMembers(account: WechatAccount, key: string, conversationId: string): import('../shared/types').GroupMember[] {
@@ -635,3 +653,57 @@ export function queryGroupMonitor(directory: string, account: WechatAccount, key
 }
 
 export function queryStickerCdnUrl(account: WechatAccount, key: string, md5: string): string | null { return recordsClient(account, key).resolveEmoticonCdnUrl(md5) || null }
+
+export function exportWechatConversation(account: WechatAccount, key: string, query: ChatExportQuery) {
+  const { conversationId, scope, format } = query
+  const client = recordsClient(account, key)
+  const isGroup = conversationId.endsWith('@chatroom')
+  const source = client.indexSource()
+  const rows: WcdbMessage[] = []
+  for (const store of source.stores().filter(store => store.room === conversationId)) {
+    const { maxId, count } = source.watermark(store)
+    let after = 0
+    let read = 0
+    while (after < maxId) {
+      const page = source.page(store, after, maxId, 500)
+      const next = Math.max(...page.map(row => Number(row.id)))
+      if (!Number.isSafeInteger(next) || next <= after) throw new Error('读取期间聊天记录发生变化，请重试')
+      rows.push(...page)
+      read += page.length
+      after = next
+    }
+    if (read !== count) throw new Error('读取期间聊天记录发生变化，请重试')
+  }
+  rows.sort((a, b) => a.createTime - b.createTime)
+  const isMine = (row: WcdbMessage) => row.isSend || row.sender === account.wxid
+  const senderId = (row: WcdbMessage) => isMine(row) ? account.wxid : isGroup ? row.sender : conversationId
+  const selected = rows.filter(row => {
+    switch (scope.kind) {
+      case 'all': return true
+      case 'me': return isMine(row)
+      case 'peer': return !isMine(row)
+      case 'member': return senderId(row) === scope.id
+    }
+  })
+  const groupNames = isGroup ? client.getGroupNicknames(conversationId) : new Map<string, string>()
+  const names = client.getDisplayNames([...new Set(selected.map(senderId).filter(Boolean))])
+  const ids = new Map<string, number | undefined>()
+  selected.forEach((row, index) => {
+    if (row.serverId && row.serverId !== '0') ids.set(row.serverId, ids.has(row.serverId) ? undefined : index + 1)
+  })
+  const noImages = new Map<string, string[]>()
+  const records = selected.map((row, index) => {
+    const id = senderId(row)
+    const name = groupNames.get(id) || names.get(id)
+    const { text, quote } = presentMessage(row.type, row.content, noImages)
+    return {
+      id: index + 1,
+      time: new Date(row.createTime * 1000).toISOString(),
+      sender: name && name !== id ? name : isMine(row) ? '我方' : isGroup ? '未知成员' : '对方',
+      type: row.type,
+      text,
+      quote: quote && { sender: quote.sender, text: quote.text, replyTo: ids.get(quote.messageId ?? '') },
+    }
+  })
+  return { content: serializeChatExport(records, format), count: records.length }
+}

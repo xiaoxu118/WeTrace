@@ -1,4 +1,6 @@
-import { generatePersonProfile } from './person-profile'
+import { randomUUID } from 'node:crypto'
+import { clearPersonProfileCheckpoint, generatePersonProfile } from './person-profile'
+import { personProfileTargetKey } from '../shared/person-profile'
 import type { EditPersonProfileInput, GeneratePersonProfileInput, ListPersonProfilesResponse, PersonProfileResponse } from '../shared/person-profile'
 import { PersonProfileStore } from './person-profile-store'
 import { previousStorage } from './storage-bootstrap'
@@ -30,7 +32,7 @@ import fs from 'node:fs'
 import { configureImagePreviewDirectory } from './image-preview-cache'
 import { notifyWechatMediaChanged, loadImagePreview, stopRecordsProcess } from './wechat-background'
 import { join } from 'node:path'
-import { fetchOriginalImage, resolveSticker, groupMonitor, listGroupMembers, listConversationOptions, detectWechat, fetchKey, listWechatAccounts, searchChatIndex, getIndexedConversation, controlChatIndex, queryConversationSummary, querySpeechStats, prepareReportParticipants, prepareReportMedia, queryReportMessages, syncWechat } from './wechat'
+import { exportChat, fetchOriginalImage, resolveSticker, groupMonitor, listPersonProfileAvatars, listGroupMembers, listConversationOptions, detectWechat, fetchKey, listWechatAccounts, searchChatIndex, getIndexedConversation, controlChatIndex, queryConversationSummary, querySpeechStats, prepareReportParticipants, prepareReportMedia, queryReportMessages, syncWechat } from './wechat'
 import { sipEnabled, wechatProcess, wechatRunning } from './security'
 import { deleteModelConfig, listModelConfigs, saveModelConfig, setDefaultModelConfig, testModelConfig } from './model-config-store'
 import { listReportStyles, saveReportStyle, deleteReportStyle } from './report-style-store'
@@ -228,6 +230,34 @@ app.whenReady().then(() => {
     }
   })
 
+  ipcMain.handle('wechat:export-chat', async (event, query: import('../shared/chat-export').ChatExportQuery): Promise<import('../shared/chat-export').ChatExportResponse> => {
+    try {
+      if (!query || typeof query.conversationId !== 'string' || !query.conversationId ||
+          (query.format !== 'json' && query.format !== 'csv')) throw new Error('导出参数无效')
+      const group = query.conversationId.endsWith('@chatroom')
+      const scope = query.scope
+      if (scope?.kind !== 'all' && !(group
+        ? scope?.kind === 'member' && typeof scope.id === 'string' && scope.id
+        : scope?.kind === 'me' || scope?.kind === 'peer')) throw new Error('导出范围无效')
+      const window = BrowserWindow.fromWebContents(event.sender)
+      if (!window) throw new Error('窗口已关闭')
+      const result = await dialog.showSaveDialog(window, {
+        title: '导出聊天记录',
+        defaultPath: randomUUID() + '.' + query.format,
+        filters: [{ name: query.format.toUpperCase(), extensions: [query.format] }],
+      })
+      if (result.canceled || !result.filePath) return { ok: true, canceled: true }
+      const { content, count } = await exportChat(query)
+      try {
+        await fs.promises.writeFile(result.filePath, content, { mode: 0o600, flag: 'wx' })
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('文件已存在，请使用新的文件名')
+        throw error
+      }
+      return { ok: true, canceled: false, count }
+    } catch (error) { return { ok: false, error: error instanceof Error ? error.message : '导出失败' } }
+  })
+
   ipcMain.handle('wechat:group-members', async (_event, query: import('../shared/types').ConversationIndexQuery): Promise<import('../shared/types').GroupMembersResponse> => {
     try { return { ok: true, members: await listGroupMembers(query) } }
     catch (error) { return { ok: false, error: error instanceof Error ? error.message : '读取群成员失败' } }
@@ -342,6 +372,10 @@ app.whenReady().then(() => {
     try { return { ok: true, records: personProfiles.list(root) } }
     catch (error) { return { ok: false, error: error instanceof Error ? error.message : '读取画像列表失败' } }
   })
+  ipcMain.handle('profile:avatars', async (_event, root: string, userIds: string[]) => {
+    try { return await listPersonProfileAvatars(root, userIds) }
+    catch { return [] }
+  })
   ipcMain.handle('profile:edit', (_event, input: EditPersonProfileInput): PersonProfileResponse => {
     try { return { ok: true, record: personProfiles.edit(input) } }
     catch (error) { return { ok: false, error: error instanceof Error ? error.message : '保存画像失败' } }
@@ -351,7 +385,7 @@ app.whenReady().then(() => {
     const owner = event.sender.id
     let controller: AbortController
     try {
-      controller = aiJobs.start(owner, input.requestId, JSON.stringify(['profile', input.target]))
+      controller = aiJobs.start(owner, input.requestId, JSON.stringify(['profile', personProfileTargetKey(input.target)]))
     } catch {
       return { ok: false, error: '已有画像正在生成' }
     }
@@ -361,8 +395,15 @@ app.whenReady().then(() => {
         if (!event.sender.isDestroyed()) event.sender.send('ai:progress', { requestId: input.requestId, detail })
       })
       controller.signal.throwIfAborted()
+      if (!profile.observations.length) {
+        clearPersonProfileCheckpoint(input.target)
+        return { ok: false, error: '没有符合审核标准的画像结论，本次未保存' }
+      }
       if (!event.sender.isDestroyed()) event.sender.send('ai:progress', { requestId: input.requestId, detail: '正在保存画像…' })
-      return { ok: true, record: personProfiles.saveGenerated(input, profile) }
+      const record = personProfiles.saveGenerated(input, profile)
+      clearPersonProfileCheckpoint(input.target)
+      if (!event.sender.isDestroyed()) event.sender.send('profile:saved', record)
+      return { ok: true, record }
     } catch (error) {
       if (controller.signal.aborted) return { ok: false, error: '已停止生成', cancelled: true }
       return { ok: false, error: error instanceof Error ? error.message : '更新画像失败' }

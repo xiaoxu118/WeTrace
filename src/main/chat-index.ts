@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'node:sqlite'
+import { DatabaseSync, type SQLOutputValue } from 'node:sqlite'
 import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes, createHmac } from 'node:crypto'
 import { mkdirSync, chmodSync } from 'node:fs'
 import { join } from 'node:path'
@@ -7,6 +7,7 @@ import { chatIndexErrorMessage } from '../shared/chat-index.ts'
 import type { WcdbMessage } from './wcdb4-client'
 import type { ReportContentType, ConversationIndexSummary, SpeechStatsResult } from '../shared/types'
 import type { ProfileCursor, ProfilePageQuery } from '../shared/person-profile'
+import { presentMessage } from './message-content.ts'
 
 export interface IndexWatermark { count: number; maxId: number; types: number; times: number; lengths: number }
 export interface IndexStore { lastActive?: number; id: string; room: string; tableName: string; dbPath: string }
@@ -21,6 +22,24 @@ export interface IndexSource {
 const blank = (): ChatIndexStatus => ({ state: 'idle', messages: 0, conversations: 0, completedStores: 0, totalStores: 0, current: '', updatedAt: null, errors: [] })
 const same = (a: IndexWatermark, b: IndexWatermark): boolean => JSON.stringify(a) === JSON.stringify(b)
 const yieldWork = (): Promise<void> => new Promise(resolve => setImmediate(resolve))
+
+const profileLookupWindow = 15 * 60_000
+const noImages = new Map<string, string[]>()
+
+function profileReply(message: WcdbMessage) {
+  if (message.type !== 49) return
+  const envelope = /<appmsg\b[^>]*>([\s\S]*?)<\/appmsg>/i.exec(message.content)?.[1]
+  if (!envelope || !/<refermsg\b/i.test(envelope)) return
+  const body = envelope.replace(/<refermsg\b[^>]*>[\s\S]*?<\/refermsg>/gi, '')
+  if (!/<type>\s*57\s*<\/type>/i.test(body)) return
+  const { text, quote } = presentMessage(message.type, message.content, noImages)
+  if (quote && text !== '[引用消息]') return { text, quotedText: quote.text }
+}
+
+function profileText(message: WcdbMessage) {
+  const reply = profileReply(message)
+  return { message: reply ? { ...message, content: reply.text } : message, quotedText: reply?.quotedText }
+}
 
 export class ChatIndex {
   private db: DatabaseSync
@@ -344,44 +363,71 @@ export class ChatIndex {
   }
   profileMessagePage(room: string, memberId: string, query: ProfilePageQuery = {}, pageSize = 200) {
     const target = [room, memberId, room.endsWith('@chatroom') ? memberId : ''] as const
-    const filter = 'FROM messages WHERE room=? AND sender IN (?,?) AND type=1'
+    this.db.function('profile_reply', { deterministic: true, directOnly: true }, (source, id, payload) =>
+      profileReply(this.unseal({ source, id, payload })) ? 1 : 0)
+    const textFilter = (prefix = '') => `CASE ${prefix}type
+      WHEN 1 THEN 1 WHEN 49 THEN profile_reply(${prefix}source,${prefix}id,${prefix}payload) ELSE 0 END`
+    const filter = `FROM messages WHERE room=? AND sender IN (?,?) AND ${textFilter()}`
     const cursor = (row: { time?: unknown; id?: unknown; source?: unknown }): ProfileCursor =>
       [Number(row.time), Number(row.id), String(row.source)]
     this.db.exec('BEGIN')
     try {
       const last = query.through ? undefined : this.db.prepare(
-        `SELECT source,id,time ${filter} ORDER BY time DESC,id DESC,source DESC LIMIT 1`,
-      ).get(...target)
+        'SELECT source,id,time FROM messages WHERE room=? ORDER BY time DESC,id DESC,source DESC LIMIT 1',
+      ).get(room)
       const through = query.through ?? (last && cursor(last))
       const snapshot = query.through ? undefined : (() => {
-        const summary = this.db.prepare(`SELECT COUNT(*) AS count, MIN(time) AS first ${filter}`).get(...target)!
-        return { from: Number(summary.first), to: through?.[0] ?? 0, count: Number(summary.count), through }
+        const summary = this.db.prepare(`SELECT COUNT(*) AS count, MIN(time) AS first, MAX(time) AS last ${filter}`).get(...target)!
+        return { from: Number(summary.first), to: Number(summary.last), count: Number(summary.count), through }
       })()
       if (!through) return { rows: [], snapshot }
       const after = query.after ?? [-1, -1, '']
-      const rows = this.db.prepare(
-        `SELECT source,id,time,payload ${filter} AND (time,id,source)>(?,?,?)
-          AND (time,id,source)<=(?,?,?) ORDER BY time,id,source LIMIT ?`,
-      ).all(...target, ...after, ...through, pageSize)
+      const lookup = query.lookup
+      const keyword = lookup && 'keyword' in lookup ? lookup.keyword.trim().toLocaleLowerCase() : ''
+      const match = keyword && keyword.length <= 40 ? this.tokens(keyword).join(' AND ') : ''
+      let rows: Record<string, SQLOutputValue>[]
+      if (lookup && 'at' in lookup) {
+        rows = this.db.prepare(
+          `SELECT source,id,time,payload ${filter} AND (time,id,source)=(?,?,?) AND (time,id,source)<=(?,?,?)`,
+        ).all(...target, ...lookup.at, ...through)
+      } else if (lookup) {
+        const matches = match ? this.db.prepare(
+          `SELECT m.source,m.id,m.time,m.payload FROM chat_search f JOIN messages m ON m.rowid=f.rowid
+            WHERE chat_search MATCH ? AND m.room=? AND m.sender IN (?,?) AND ${textFilter('m.')} AND (m.time,m.id,m.source)<=(?,?,?)
+            ORDER BY m.time DESC,m.id DESC,m.source DESC LIMIT 100`,
+        ).all(match, ...target, ...through)
+          .filter(row => profileText(this.unseal(row)).message.content.toLocaleLowerCase().includes(keyword)) : []
+        rows = []
+        for (const candidate of matches) {
+          if (rows.every(row => Number(row.time) - Number(candidate.time) >= profileLookupWindow)) rows.push(candidate)
+          if (rows.length >= 4) break
+        }
+        rows.push(...matches.filter(row => !rows.includes(row)).slice(0, 4 - rows.length))
+      } else {
+        rows = this.db.prepare(
+          `SELECT source,id,time,payload ${filter} AND (time,id,source)>(?,?,?)
+            AND (time,id,source)<=(?,?,?) ORDER BY time,id,source LIMIT ?`,
+        ).all(...target, ...after, ...through, pageSize)
+      }
       const previous = this.db.prepare(`SELECT source,id,time,sender,payload FROM messages
-        WHERE room=? AND type=1 AND time>=? AND (time,id,source)<(?,?,?)
-        ORDER BY time DESC,id DESC,source DESC LIMIT 2`)
+        WHERE room=? AND ${textFilter()} AND time>=? AND (time,id,source)<(?,?,?)
+        ORDER BY time DESC,id DESC,source DESC LIMIT ?`)
       const following = this.db.prepare(`SELECT source,id,time,sender,payload FROM messages
-        WHERE room=? AND type=1 AND time<=? AND (time,id,source)>(?,?,?)
-        ORDER BY time,id,source LIMIT 2`)
+        WHERE room=? AND ${textFilter()} AND time<=? AND (time,id,source)>(?,?,?) AND (time,id,source)<=(?,?,?)
+        ORDER BY time,id,source LIMIT ?`)
       return {
         snapshot,
-        next: rows.length === pageSize ? cursor(rows[rows.length - 1]) : undefined,
+        next: !lookup && rows.length === pageSize ? cursor(rows[rows.length - 1]) : undefined,
         rows: rows.map(row => {
-          const anchor = this.unseal(row)
+          const { message: anchor, quotedText } = profileText(this.unseal(row))
           const position = cursor(row)
-          const unpack = (item: typeof row) => ({ message: this.unseal(item), sender: String(item.sender ?? '') })
-          // Short replies can depend on the surrounding conversation.
-          const context = anchor.content.trim().length <= 24
+          const unpack = (item: typeof row) => ({ ...profileText(this.unseal(item)), sender: String(item.sender ?? '') })
+          const radius = lookup ? profileLookupWindow : 5 * 60_000
+          const neighbors = lookup ? 5 : 2
           return {
-            anchor,
-            previous: context ? previous.all(room, position[0] - 5 * 60_000, ...position).reverse().map(unpack) : [],
-            following: context ? following.all(room, Math.min(through[0], position[0] + 5 * 60_000), ...position).map(unpack) : [],
+            anchor, quotedText, cursor: position,
+            previous: previous.all(room, position[0] - radius, ...position, neighbors).reverse().map(unpack),
+            following: following.all(room, position[0] + radius, ...position, ...through, neighbors).map(unpack),
           }
         }),
       }

@@ -23,14 +23,32 @@ app.whenReady().then(async () => {
   return {ok:true,members:[{id:'private-member-1',name:'同名成员'},{id:'private-member-2',name:'同名成员'}]};
  };
  const profileRequests=[];
+ const mockTasks=[];
+ const taskListeners=new Set();
+ const taskInputs=new Map();
+ const publishTasks=()=>taskListeners.forEach(listener=>listener(structuredClone(mockTasks)));
+ api.onProcessingTasks=listener=>{taskListeners.add(listener);listener(structuredClone(mockTasks));return ()=>taskListeners.delete(listener);};
+ api.cancelProcessingTask=async id=>{releaseProfiles.get(id)?.('cancelled');};
+ api.retryProcessingTask=async id=>{
+  const task=mockTasks.find(item=>item.id===id);
+  if(!task?.retryable) return;
+  task.retryable=false;
+  return api.generatePersonProfile({...taskInputs.get(id),requestId:crypto.randomUUID()});
+ };
  const profileTime=Date.now();
  const profileMessage={id:'profile-message',createdAt:profileTime,target:true,speaker:0,text:'先确认测试范围，再安排复查。'};
  api.profileRequests=async()=>profileRequests;
  let savedProfile;
- let releaseProfile;
- api.finishProfile=error=>releaseProfile?.(error);
- api.cancelAi=()=>releaseProfile?.('cancelled');
+ const releaseProfiles=new Map();
+ api.finishProfile=(error,id=mockTasks[0]?.id)=>releaseProfiles.get(id)?.(error);
+ api.cancelAi=requestId=>{
+  const task=mockTasks.find(item=>taskInputs.get(item.id)?.requestId===requestId);
+  if(task) releaseProfiles.get(task.id)?.('cancelled');
+ };
  api.listPersonProfiles=async()=>({ok:true,records:savedProfile?[savedProfile]:[]});
+ api.listPersonProfileAvatars=async(root,ids)=>root==='/test'&&ids.includes('private-member-2')
+  ? [{id:'private-member-2',avatar:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGMwylsFAAIgAUtfPl0EAAAAAElFTkSuQmCC'}]
+  : [];
  api.editPersonProfile=async input=>{
   const observations=Object.entries(input.sections).flatMap(([category,detail])=>detail?[{category,detail,references:[]}]:[]);
   savedProfile={...savedProfile,name:input.name.trim()||savedProfile.name,revision:'updated',profile:{...savedProfile.profile,observations}};
@@ -38,9 +56,24 @@ app.whenReady().then(async () => {
  };
  api.generatePersonProfile=async input=>{
   profileRequests.push(input);
-  const error=await new Promise(resolve=>{ releaseProfile=resolve; });
+  const target=input.target;
+  const subjectKey=JSON.stringify(target.kind==='contact'
+   ? [target.root,target.kind,target.contactId] : [target.root,target.kind,target.groupId,target.memberId]);
+  const task={id:profileRequests.length,title:'画像生成',subject:input.name,subjectKey,state:'running',
+   startedAt:Date.now(),detail:'正在核对原话并审核画像',cancellable:true};
+  mockTasks.unshift(task);
+  taskInputs.set(task.id,input);
+  publishTasks();
+  const error=await new Promise(resolve=>{ releaseProfiles.set(task.id,resolve); });
+  releaseProfiles.delete(task.id);
+  task.finishedAt=Date.now();
+  task.cancellable=false;
+  task.state=error==='cancelled'?'cancelled':error?'failed':'done';
+  task.detail=error;
+  task.retryable=task.state==='failed'||task.state==='cancelled';
+  publishTasks();
   if(error) return {ok:false,error:error==='cancelled'?'已停止生成':error,cancelled:error==='cancelled'};
-  savedProfile={id:'profile',revision:'created',target:input.target,name:input.name,groupName:input.groupName,updatedAt:Date.now(),profile:{from:profileTime-86400000,to:profileTime,evidence:[{anchor:profileMessage,messages:[profileMessage]}],observations:[{title:'先确认范围',detail:'讨论复查时先确认测试范围。',references:[1]},{category:'其他',detail:'随后安排复查。',references:[1]},{category:'基础信息',title:'自我介绍',detail:'本人使用小明作为昵称。',references:[]}]}};
+  savedProfile={id:'profile',revision:'created',target:input.target,name:input.name,groupName:input.groupName,updatedAt:Date.now(),profile:{from:profileTime-86400000,to:profileTime,evidence:[{anchor:profileMessage,messages:[profileMessage]}],observations:[{title:'先确认范围',detail:'讨论复查时先确认测试范围。',references:[1],review:{confidence:3,value:2,reason:'本人明确说明了处理顺序。'}},{category:'其他',detail:'随后安排复查。',references:[1]},{category:'基础信息',title:'自我介绍',detail:'本人使用小明作为昵称。',references:[]}]}};
   return {ok:true,record:savedProfile};
  };
  api.getIndexedConversation=async query=>query.conversationId!=='watch@chatroom'||query.at!==profileTime
@@ -115,23 +148,22 @@ app.whenReady().then(async () => {
   await until(`!document.querySelector('.profiles-view .btn.primary').disabled && document.querySelector('.profiles-view').textContent.includes('同名成员（2）')`)
   const listPosition = await run(`document.querySelector('.profile-list').getBoundingClientRect().top`)
   await click('.profiles-view .btn.primary')
-  await until(`!!document.querySelector('.profile-job-status [role="status"]')`)
-  assert.ok(await run(`document.querySelector('.profiles-view .btn.primary').disabled`))
-  assert.ok(await run(`document.querySelector('.profile-job-status').textContent.includes('正在更新画像')`))
-  assert.equal(await run(`getComputedStyle(document.querySelector('.profile-job-status')).position`), 'fixed')
-  assert.equal(await run(`document.querySelector('.profile-list').getBoundingClientRect().top`), listPosition)
   await until(`window.wetrace.profileRequests().then(items=>items.length===1)`)
+  assert.ok(await run(`document.querySelector('.profiles-view .btn.primary').disabled`))
+  assert.ok(await run(`!document.querySelector('.profile-job-status')`))
+  assert.equal(await run(`document.querySelector('.profile-list').getBoundingClientRect().top`), listPosition)
   await run('window.wetrace.finishProfile()')
   await until(`document.querySelector('.profile-list')?.textContent.includes('同名成员（2）')`)
-  await until(`document.querySelector('.profile-job-status[data-status="saved"]')?.textContent.includes('画像已保存')`)
-  await click('.profile-job-status button')
-  await until(`!document.querySelector('.profile-job-status')`)
   const [profileRequest] = await run('window.wetrace.profileRequests()')
   assert.deepEqual(profileRequest.target, {kind:'group-member',root:'/test',groupId:'watch@chatroom',memberId:'private-member-2'})
   assert.deepEqual(await run(`[...document.querySelectorAll('.profile-list thead th')].map(item => item.textContent)`),
     ['人物', '来源', '基础信息', '更新时间', '操作'])
   assert.ok(await run(`document.querySelector('.profile-list tbody').textContent.includes('本人使用小明作为昵称。')`))
   assert.equal(await run(`document.querySelectorAll('.profile-list tbody tr[data-row-key]').length`), 1)
+  await until(`(() => {
+    const avatar = document.querySelector('.profile-list .profile-table-person .ant-avatar img')
+    return avatar?.complete && avatar.naturalWidth > 0
+  })()`)
   const searchProfiles = value => run(`(() => {
     const input = document.querySelector('[aria-label="搜索画像"]')
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(value)})
@@ -150,6 +182,9 @@ app.whenReady().then(async () => {
   assert.equal(await run(`!!document.querySelector('.profiles-view .profile-observations')`), false)
   assert.equal(await run(`document.querySelectorAll('.profile-category .ant-card').length`), 2)
   assert.equal(await run(`document.querySelector('.profile-observations').textContent.includes('聊天证据')`), false)
+  assert.equal(await run(`document.querySelector('.profile-observations').textContent.includes('本人明确说明了处理顺序。')`), false)
+  assert.equal(await run(`document.querySelector('.profile-observations').textContent.includes('查看原话')`), false)
+  assert.equal(await run(`document.querySelector('.profile-observations').textContent.includes('先确认测试范围，再安排复查。')`), false)
   await click('.profile-editor-actions .ant-btn-primary')
   await until(`!!document.querySelector('.profile-editor input')`)
   assert.deepEqual(await run(`[...document.querySelectorAll('.profile-editor legend')].map(item => item.textContent)`), ['基础信息', '性格与行为', '兴趣爱好', '其他'])
@@ -195,13 +230,48 @@ app.whenReady().then(async () => {
   await until(`!document.querySelector('.profiles-view .btn.primary').disabled`)
   await click('.profiles-view .btn.primary')
   await until(`window.wetrace.profileRequests().then(items=>items.length===2)`)
-  await click('.profile-job-status button')
-  await until(`document.querySelector('.profile-job-status[data-status="cancelled"]')?.textContent.includes('画像更新已取消')`)
-  await click('.profiles-view .btn.primary')
+  const openTaskCenter = async () => {
+    await click('button[aria-label^="任务中心"]')
+    await until(`(() => {
+      const drawer = document.querySelector('.ant-drawer-open .ant-drawer-content-wrapper')
+      return drawer?.querySelector('.ant-drawer-title')?.textContent === '任务中心'
+        && drawer.getBoundingClientRect().right <= innerWidth + 1
+    })()`)
+  }
+  await openTaskCenter()
+  await click('.ant-drawer .ant-card button')
+  await until(`document.querySelector('.ant-drawer .ant-card')?.textContent.includes('已取消')`)
+  assert.equal(await run(`document.querySelector('.ant-drawer .ant-card button')?.textContent.replaceAll(' ', '')`), '继续')
+  await click('.ant-drawer .ant-card button')
   await until(`window.wetrace.profileRequests().then(items=>items.length===3)`)
   await run(`window.wetrace.finishProfile('测试模型请求失败')`)
-  await until(`document.querySelector('.profile-job-status [role="alert"]')?.textContent.includes('测试模型请求失败')`)
-  await click('.profile-job-status button')
+  await until(`document.querySelector('.ant-drawer .ant-card')?.textContent.includes('测试模型请求失败')`)
+  await click('.ant-drawer .ant-card button')
+  await until(`window.wetrace.profileRequests().then(items=>items.length===4)`)
+  await until(`document.querySelector('.ant-drawer .ant-card')?.textContent.includes('正在核对原话并审核画像')`)
+  await run('window.wetrace.finishProfile()')
+  await until(`document.querySelector('.ant-drawer .ant-card')?.textContent.includes('已完成')`)
+  await click('.ant-drawer-close')
+  await click('.profiles-view .btn.primary')
+  await until(`window.wetrace.profileRequests().then(items=>items.length===5)`)
+  assert.ok(await run(`document.querySelector('.profiles-view .btn.primary').disabled`))
+  await openTaskCenter()
+  await click('.profiles-view .ant-select')
+  await click('.profile-select-popup:not(.ant-select-dropdown-hidden) [title="产品讨论群"]')
+  await until(`document.querySelectorAll('.profiles-view .profile-select .ant-select').length === 2 && !document.querySelector('.profiles-view .ant-select-loading')`)
+  await click('.profile-select + .profile-select .ant-select')
+  await click('.profile-select-popup:not(.ant-select-dropdown-hidden) [title="同名成员（1）"]')
+  await click('.profiles-view .btn.primary')
+  await until(`window.wetrace.profileRequests().then(items=>items.length===6)`)
+  await until(`!!document.querySelector('button[aria-label="任务中心，2 项处理中"]')`)
+  await until(`document.querySelectorAll('.ant-drawer-open .ant-tag-processing').length === 2`)
+  await run(`window.wetrace.finishProfile('cancelled', 5)`)
+  await until(`!!document.querySelector('button[aria-label="任务中心，1 项处理中"]')`)
+  assert.ok(await run(`document.querySelector('.profiles-view .btn.primary').disabled`))
+  await run(`window.wetrace.finishProfile('cancelled', 6)`)
+  await until(`!document.querySelector('.profiles-view .btn.primary').disabled`)
+  await click('button[aria-label="任务中心"]')
+  await until(`!document.querySelector('.ant-drawer-open')`)
   for (const tab of ['消息', '群聊监控', '设置']) {
    await run(`document.querySelector('button[aria-label="画像"]').click()`)
    await until(`!!document.querySelector('.profiles-view')`)

@@ -1,3 +1,5 @@
+import { ChatExport } from './components/ChatExport'
+import { TaskCenter } from './components/TaskCenter'
 import { Profiles } from './components/Profiles'
 import { preserveConversationAvatars } from '../../shared/conversation-avatars'
 import { ScheduledMessagesPanel } from './components/ScheduledMessagesPanel'
@@ -55,7 +57,8 @@ import { ChatAnalysis } from './components/ChatAnalysis'
 import { modelPreset, modelProviders, modelKindLabels } from '../../shared/model-presets'
 import { reportMemberKey, reportMemberName, filterReportMessages } from '../../shared/report-messages'
 import { defaultReportStyles, type ReportWritingStyle } from '../../shared/report-styles'
-import { defaultReportTemplates } from '../../shared/report-templates'
+import { commentaryReportExample } from './report-commentary-example'
+import { commentaryReportTemplateId, defaultReportTemplates } from '../../shared/report-templates'
 
 type View = 'send' | 'ai' | 'messages' | 'summary' | 'settings' | 'monitor' | 'profiles'
 type SettingsPanel = 'db' | 'model' | 'asr' | 'cache' | 'about'
@@ -795,6 +798,8 @@ export default function App() {
   const [voiceModelStatus, setVoiceModelStatus] = useState<VoiceModelStatus | null>(null)
   const [voiceModelBusy, setVoiceModelBusy] = useState(false)
   const [summaryPanel, setSummaryPanel] = useState<SummaryPanel>('home')
+  const [reportExampleId, setReportExampleId] = useState(defaultReportTemplates[0].id)
+  const commentaryExample = reportExampleId === commentaryReportTemplateId
   const [reportTask, setReportTask] = useState<{
     conversationId: string; conversationName: string; avatar?: string; target: string
     startDate: string; endDate: string; messageCount: number; style: string
@@ -980,12 +985,11 @@ export default function App() {
   const reportSelectedCount = reportContentTypes.reduce((total, item) => total + (reportContent[item.id] ? reportContentCounts[item.id] : 0), 0)
   const personalReport = reportConversation?.type === 'group' && !!reportTargetKey
   const availableReportTemplates = defaultReportTemplates
-  const availableReportStyles = reportStyles.filter(style => !style.builtin || (style.scope === 'personal') === personalReport)
-  const selectedReportStyle = availableReportStyles.find(style => style.id === reportStyle) ?? availableReportStyles[0]
+  const selectedReportStyle = reportStyles.find(style => style.id === reportStyle) ?? reportStyles[0]
   const reportTemplate = availableReportTemplates.find(template => template.id === reportTemplateId) ?? availableReportTemplates[0]
   useEffect(() => {
     setReportTemplateId(defaultReportTemplates[0].id)
-    setReportStyle(personalReport ? 'personal-concise' : 'default')
+    setReportStyle('default')
     setReportStyleEditing(false)
   }, [personalReport])
 
@@ -1730,7 +1734,7 @@ export default function App() {
     setReportStyleSaving(true)
     try {
       setReportStyles(await window.wetrace.deleteReportStyle(selectedReportStyle.id))
-      setReportStyle(personalReport ? 'personal-concise' : 'default')
+      setReportStyle('default')
       setReportStyleEditing(false)
       notify('自定义风格已删除')
     } catch (error) { notify(error instanceof Error ? error.message : '删除风格失败') }
@@ -1848,6 +1852,7 @@ export default function App() {
           </button>
         ))}
         <div className="spacer" />
+        <TaskCenter />
         <button
           type="button"
           ref={profileButton}
@@ -1960,6 +1965,7 @@ export default function App() {
                       }</div>
                   </div>
                   <div className="ops">
+                    {real?.account.root && selected.type !== 'official' && <ChatExport key={JSON.stringify([real.account.root, selected.id])} root={real.account.root} conversation={selected} />}
                     {selected.type !== 'official' && <ActionButton className="speech-entry" onClick={openCurrentConversationReport}><FileText size={14} />生成报告</ActionButton>}
                     <button type="button" className="speech-entry" disabled={!real?.account.root} title="关联当前会话，发送问题后按需查询聊天记录" onClick={() => {
                       setAiLaunch({ id: crypto.randomUUID(), root: real!.account.root, context: conversationAiContext(selected) })
@@ -2026,7 +2032,7 @@ export default function App() {
             {summaryPanel === 'templates' && (
               <div className="page summary-page">
                 <div className="page-head">
-                  <div><button type="button" className="page-back" onClick={() => setSummaryPanel('home')}><ArrowLeft size={14} />总结</button><h2>报告模板</h2><p>系统内置展示模板；模板决定排版，报告内容由风格控制。</p></div>
+                  <div><button type="button" className="page-back" onClick={() => setSummaryPanel('home')}><ArrowLeft size={14} />总结</button><h2>报告模板</h2><p>模板决定栏目和排版，内容风格决定表达方式。</p></div>
                   <ActionButton type="button" className="btn primary" onClick={() => openReportGenerator()}><FileText size={14} />生成报告</ActionButton>
                 </div>
                 <div className="template-list">
@@ -2039,7 +2045,7 @@ export default function App() {
                           {template.features.map(section => <span key={section}>{section}</span>)}
                         </div>
                       </div>
-                      <ActionButton type="button" className="btn sm" onClick={() => setSummaryPanel('example')}>查看示例 <ArrowRight size={13} /></ActionButton>
+                      <ActionButton type="button" className="btn sm" onClick={() => { setReportExampleId(template.id); setSummaryPanel('example') }}>查看示例 <ArrowRight size={13} /></ActionButton>
                     </article>
                   ))}
                 </div>
@@ -2049,9 +2055,11 @@ export default function App() {
             {summaryPanel === 'example' && (
               <div className="page summary-page report-example-page">
                 <div className="page-head">
-                  <div><button type="button" className="page-back" onClick={() => setSummaryPanel('templates')}><ArrowLeft size={14} />报告模板</button><h2>默认模板示例</h2><p>以下为模拟数据，展示报告的实际排版效果。</p></div>
+                  <div><button type="button" className="page-back" onClick={() => setSummaryPanel('templates')}><ArrowLeft size={14} />报告模板</button><h2>{commentaryExample ? '话题点评模板示例' : '默认模板示例'}</h2><p>以下为模拟数据，展示报告的实际排版效果。</p></div>
                 </div>
-                <iframe className="report-example-frame" title="默认模板报告示例" src="./default-report-example.html" sandbox="" />
+                {commentaryExample
+                  ? <iframe className="report-example-frame" title="话题点评模板报告示例" srcDoc={commentaryReportExample} sandbox="" />
+                  : <iframe className="report-example-frame" title="默认模板报告示例" src="./default-report-example.html" sandbox="" />}
               </div>
             )}
 
@@ -2133,14 +2141,14 @@ export default function App() {
                           {reportMembers.map(member => <option key={member.key} value={member.key}>{member.name}（{member.count} 条{reportMembers.filter(item => item.name === member.name).length > 1 ? ` · ${member.key}` : ''}）</option>)}
                         </select>
                       </Field>}
-                      <Field title="报告模板" hint="系统内置，只影响展示排版">
+                      <Field title="报告模板">
                         <select className="inp provider" aria-label="报告模板" value={reportTemplate.id} onChange={event => setReportTemplateId(event.target.value)}>{availableReportTemplates.map(template => <option key={template.id} value={template.id}>{template.name}</option>)}</select>
                       </Field>
                       <Field title="报告风格" hint="影响内容侧重点、语气与详略，可自定义保存">
                         <div className="report-style-control">
                           <div className="report-style-toolbar">
                             <select className="inp provider" aria-label="报告风格" value={selectedReportStyle?.id ?? ''} disabled={reportStyleEditing || reportStyleSaving} onChange={event => setReportStyle(event.target.value)}>
-                              <optgroup label="内置风格">{availableReportStyles.filter(style => style.builtin).map(style => <option key={style.id} value={style.id}>{style.name}</option>)}</optgroup>
+                              <optgroup label="内置风格">{reportStyles.filter(style => style.builtin).map(style => <option key={style.id} value={style.id}>{style.name}</option>)}</optgroup>
                               {reportStyles.some(style => !style.builtin) && <optgroup label="我的风格">{reportStyles.filter(style => !style.builtin).map(style => <option key={style.id} value={style.id}>{style.name}</option>)}</optgroup>}
                             </select>
                             {!reportStyleEditing && <ActionButton className="btn sm" type="button" disabled={reportStyleSaving} onClick={() => editReportStyle()}>新建风格</ActionButton>}

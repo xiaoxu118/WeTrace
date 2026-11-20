@@ -26,22 +26,22 @@ app.whenReady().then(async () => {
     await fs.writeFile(stylesPath, stripTypeScriptTypes(await fs.readFile('src/shared/report-styles.ts', 'utf8')))
     await fs.writeFile(storePath, stripTypeScriptTypes((await fs.readFile('src/main/report-style-store.ts', 'utf8')).replace("'../shared/report-styles'", "'./styles.mjs'")))
     const store = await import(pathToFileURL(storePath).href)
-    assert.equal(store.listReportStyles().length, 9)
-    assert.equal(store.resolveReportStyle('personal-concise').scope, 'personal')
+    assert.deepEqual(store.listReportStyles().map(style => style.id), ['default'])
+    assert.throws(() => store.resolveReportStyle('personal-concise'), /已不存在/)
     const savedStyle = store.saveReportStyle({ name: '项目周报', prompt: '正式语气，优先总结进展、负责人和风险。' })
     assert.ok(savedStyle.id.startsWith('custom-'))
     assert.equal(store.resolveReportStyle(savedStyle.id).prompt, savedStyle.prompt)
     const reloadedStore = await import(pathToFileURL(storePath).href + '?reload')
     assert.equal(reloadedStore.resolveReportStyle(savedStyle.id).name, '项目周报')
     assert.throws(() => store.saveReportStyle({ name: '项目周报', prompt: '重复' }), /同名/)
-    assert.throws(() => store.saveReportStyle({ id: 'concise', name: '修改内置', prompt: '测试' }), /只能编辑/)
+    assert.throws(() => store.saveReportStyle({ id: 'default', name: '修改内置', prompt: '测试' }), /只能编辑/)
     assert.throws(() => store.saveReportStyle({ name: '', prompt: '测试' }), /风格名称/)
     assert.throws(() => store.saveReportStyle({ name: '过长', prompt: 'a'.repeat(3001) }), /内容风格/)
     store.saveReportStyle({ id: savedStyle.id, name: '项目周报修订', prompt: '优先整理风险及责任人' })
     assert.equal(store.resolveReportStyle(savedStyle.id).prompt, '优先整理风险及责任人')
     store.deleteReportStyle(savedStyle.id)
     assert.throws(() => store.resolveReportStyle(savedStyle.id), /已不存在/)
-    assert.throws(() => store.deleteReportStyle('concise'), /只能删除/)
+    assert.throws(() => store.deleteReportStyle('default'), /只能删除/)
     const prompts = []
     const stages = []
     const fixture = [
@@ -71,7 +71,7 @@ app.whenReady().then(async () => {
           return JSON.stringify({ hero: { summary: '语音内容：离线识别文本。' }, topics: [{ title: '语音讨论', summary: '离线识别文本', sourceMessageIds: ['r1'] }], quotes: [{ messages: [{ sender: '语音成员', content: '离线识别文本', sourceMessageId: 'r1' }], sourceMessageIds: ['r1'] }], todos: [], unresolved: [] })
         }
 
-        if (!image && failTextTimes-- > 0) throw new Error('模型输出达到长度限制，请缩小日期范围或选择简洁风格后重试')
+        if (!image && failTextTimes-- > 0) throw new Error('模型输出达到长度限制，请缩小日期范围后重试')
         if (failImage && image) throw new Error('图片模型不可用')
         if (!image && prompt.includes('你正在补全长记录日报')) {
           const reference = /\[(r\d+)\]/.exec(prompt)[1]
@@ -83,7 +83,7 @@ app.whenReady().then(async () => {
         }
         return image ? '图片中有项目进度表' : '## 整体概览\n本周完成了任务。\n## 原文依据\n消息 [1]\n' + '报告正文\n'.repeat(reportLines)
       },
-      resolveReportStyle: id => ['sharp', 'sarcastic'].includes(id) ? store.resolveReportStyle(id) : ({ id, name: id === 'custom-test' ? '项目风格' : '简洁摘要', prompt: id === 'custom-test' ? '优先整理风险及责任人' : '聚焦重点与结论' }),
+      resolveReportStyle: id => id === 'custom-test' ? { id, name: '项目风格', prompt: '优先整理风险及责任人', builtin: false } : store.resolveReportStyle(id),
     }
     const memberHelperPath = path.join(moduleDirectory, 'report-members.mjs')
     await fs.writeFile(memberHelperPath, stripTypeScriptTypes(await fs.readFile('src/shared/report-messages.ts', 'utf8')))
@@ -114,11 +114,11 @@ app.whenReady().then(async () => {
     source = source.replace("'./image-description-cache'", "'./image-cache.mjs'")
     source = source.replace("'./report-renderer'", "'./renderer.mjs'")
     await fs.writeFile(path.join(moduleDirectory, 'feed.mjs'), stripTypeScriptTypes(await fs.readFile('src/shared/report-feed.ts', 'utf8')))
-    await fs.writeFile(rendererPath, stripTypeScriptTypes((await fs.readFile('src/main/report-renderer.ts', 'utf8')).replace("'./report-model'", "'./model.mjs'").replace("'../shared/report-topics'", "'./topics.mjs'").replace("'../shared/report-feed'", "'./feed.mjs'")))
+    await fs.writeFile(rendererPath, stripTypeScriptTypes((await fs.readFile('src/main/report-renderer.ts', 'utf8')).replace("'./report-model'", "'./model.mjs'").replace("'../shared/report-topics'", "'./topics.mjs'").replace("'../shared/report-feed'", "'./feed.mjs'").replace("'../shared/report-templates'", "'./templates.mjs'")))
     await fs.writeFile(helperPath, stripTypeScriptTypes(await fs.readFile('src/main/report-model.ts', 'utf8')))
     await fs.writeFile(modulePath, stripTypeScriptTypes(source))
     const { generateReport } = await import(pathToFileURL(modulePath).href)
-    const input = { conversationId: 'test@chatroom', requestId: 'test', snapshotId: 'test-snapshot', conversationName: '<script>test</script>', modelId: 'text', imageModelId: 'image', templateId: 'default', style: 'concise', format: 'desktop', contentTypes: ['message', 'voice', 'image', 'video'], startDate: '2026-10-01', endDate: '2026-10-02' }
+    const input = { conversationId: 'test@chatroom', requestId: 'test', snapshotId: 'test-snapshot', conversationName: '<script>test</script>', modelId: 'text', imageModelId: 'image', templateId: 'default', style: 'default', format: 'desktop', contentTypes: ['message', 'voice', 'image', 'video'], startDate: '2026-10-01', endDate: '2026-10-02' }
     const snapshotData = { ...input, messages: fixture, counts: { message: 1, voice: 1, image: 2, video: 1 } }
     const voice = { directory: temporary, cacheVersion: 'test-model-v1', getStatus: async () => ({ state: 'ready' }) }
     await assert.rejects(generateReport({ ...input, targetMember: { key: 'id:missing', name: '不存在的成员' } }, voice, () => {}, snapshotData), /所选成员在当前范围没有消息/)
@@ -155,7 +155,7 @@ app.whenReady().then(async () => {
     assert.equal(prompts.filter(item => item.image).length, 1)
     const metadata = JSON.parse(await fs.readFile(path.join(path.dirname(result.htmlPath), 'report.json'), 'utf8'))
     assert.equal(metadata.styleId, input.style)
-    assert.equal(metadata.stylePrompt, '聚焦重点与结论')
+    assert.equal(metadata.stylePrompt, store.resolveReportStyle('default').prompt)
     assert.equal(metadata.startDate, input.startDate)
     assert.ok(metadata.name.includes(input.conversationName))
     const html = await fs.readFile(result.htmlPath, 'utf8')
@@ -214,27 +214,6 @@ app.whenReady().then(async () => {
       assert.ok(rendered.includes('<strong>重点</strong>'))
       assert.ok(rendered.includes('&lt;script&gt;内容&lt;/script&gt;'))
     }
-    const previousPrompts = prompts.slice()
-    const styleResults = []
-    reportLines = 3
-    for (const style of ['sharp', 'sarcastic']) {
-      prompts.length = 0
-      const report = await generateReport({ ...input, style, targetMember: undefined, contentTypes: ['message'] }, voice, () => {}, { ...snapshotData, contentTypes: ['message'], messages: [{ ...fixture[0], text: '真实项目讨论与决定。'.repeat(3500) }], counts: { message: 1, image: 0, voice: 0, video: 0 } })
-      const chosen = store.resolveReportStyle(style)
-      const textPrompts = prompts.filter(item => item.kind === 'text')
-      assert.ok(textPrompts.length > 1, '覆盖中间证据整理与最终生成')
-      assert.ok(textPrompts.slice(0, -1).every(item => !item.prompt.includes(chosen.prompt)), '预设表达风格不进入证据压缩')
-      assert.ok(textPrompts.at(-1).prompt.includes(chosen.prompt), '最终生成使用预设风格')
-      const meta = JSON.parse(await fs.readFile(path.join(path.dirname(report.htmlPath), 'report.json'), 'utf8'))
-      assert.equal(meta.styleName, chosen.name)
-      assert.equal(meta.stylePrompt, chosen.prompt)
-      assert.ok((await fs.readFile(report.htmlPath, 'utf8')).includes('成员确认了下一步行动'))
-      assert.equal(report.pngPaths.length, 1)
-      styleResults.push(report.content)
-    }
-    assert.equal(styleResults[0], styleResults[1], '相同模拟事实不被程序随风格改写')
-    reportLines = 150
-    prompts.splice(0, prompts.length, ...previousPrompts)
     const personalFixture = { ...snapshotData, messages: [{ ...fixture[0], senderId: 'alice', sender: '成员甲', text: '个人发言', from: 'them' }, { ...fixture[0], id: 'self', senderId: 'me', sender: '我', text: '我的发言', from: 'me' }] }
     await generateReport({ ...input, targetMember: { key: 'id:alice', name: '成员甲' } }, voice, () => {}, personalFixture)
     await generateReport({ ...input, targetMember: { key: 'self', name: '我' } }, voice, () => {}, personalFixture)
@@ -267,7 +246,7 @@ app.whenReady().then(async () => {
     const volumeMessages = Array.from({ length: 9000 }, (_, index) => ({ ...fixture[0], id: `volume-${index}`, text: '围绕实施方案讨论具体问题、不同意见、处理过程和验证结果。'.repeat(5), sender: `成员${index % 21}`, senderId: `volume-${index % 21}`, createdAt: new Date(2026, 9, 1).getTime() + index * 16000 }))
     const volumeStart = prompts.length
     const volumeStages = []
-    const volumeResult = await generateReport({ ...input, targetMember: undefined, conversationId: 'volume@chatroom', contentTypes: ['message'], style: 'detailed' }, voice, event => volumeStages.push(event), { ...snapshotData, messages: volumeMessages })
+    const volumeResult = await generateReport({ ...input, targetMember: undefined, conversationId: 'volume@chatroom', contentTypes: ['message'], style: 'default' }, voice, event => volumeStages.push(event), { ...snapshotData, messages: volumeMessages })
     const volumePrompts = prompts.slice(volumeStart).filter(item => item.kind === 'text')
     assert.ok(volumePrompts.some(item => item.prompt.includes('不限制本段为800字')))
     assert.ok(volumePrompts.some(item => item.prompt.includes('最多 12 个独立主要话题')))
@@ -276,7 +255,7 @@ app.whenReady().then(async () => {
     assert.ok(volumeHtml.includes('template-mobile-feed'))
     assert.ok(volumeHtml.includes('处理过程与验证结果'))
     assert.equal((volumeHtml.match(/class="rank"/g) || []).length, 10)
-    for (const style of ['default', 'concise', 'natural', 'custom-test']) {
+    for (const style of ['default', 'custom-test']) {
       const styleResult = await generateReport({ ...input, targetMember: undefined, conversationId: 'style@chatroom', contentTypes: ['message'], style }, voice, () => {}, { ...snapshotData, messages: volumeMessages.slice(0, 3) })
       const styleHtml = await fs.readFile(styleResult.htmlPath, 'utf8')
       assert.ok(styleHtml.includes('template-mobile-feed'), `${style} 使用同一默认模板`)
@@ -315,7 +294,7 @@ app.whenReady().then(async () => {
     const beforeVoiceOnly = transcriptionCalls
     const voiceStages = []
     const voiceMessage = { ...fixture[1], id: 'voice-only', sender: '语音成员', senderId: 'synthetic-voice-member', voice: undefined, reportMedia: { content: 'synthetic voice metadata' } }
-    const voiceReport = await generateReport({ ...input, requestId: 'voice-only', targetMember: undefined, conversationId: 'voice-only@chatroom', contentTypes: ['voice'], style: 'concise' }, voice, event => voiceStages.push(event), { ...snapshotData, conversationId: 'voice-only@chatroom', contentTypes: ['voice'], messages: [voiceMessage], counts: { message: 0, voice: 1, image: 0, video: 0 } }, async message => {
+    const voiceReport = await generateReport({ ...input, requestId: 'voice-only', targetMember: undefined, conversationId: 'voice-only@chatroom', contentTypes: ['voice'], style: 'default' }, voice, event => voiceStages.push(event), { ...snapshotData, conversationId: 'voice-only@chatroom', contentTypes: ['voice'], messages: [voiceMessage], counts: { message: 0, voice: 1, image: 0, video: 0 } }, async message => {
       assert.equal(message.messageType, 34)
       return { ...message, voice: { hex: '1234' } }
     })

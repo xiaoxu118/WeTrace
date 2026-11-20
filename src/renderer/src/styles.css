@@ -741,42 +741,6 @@ select:focus-visible {
   overflow: auto;
 }
 
-.profile-job-status {
-  position: fixed;
-  top: 20px;
-  right: 24px;
-  z-index: 900;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: min(360px, calc(100vw - 48px));
-  padding: 10px 12px 10px 16px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--panel);
-  box-shadow: 0 6px 20px #242b3814;
-}
-
-.profile-job-status button {
-  flex-shrink: 0;
-  margin-left: auto;
-}
-
-.profile-job-status-text {
-  display: grid;
-  min-width: 0;
-  gap: 3px;
-  overflow-wrap: anywhere;
-}
-
-.profile-job-status[data-status="saved"] strong {
-  color: #237346;
-}
-
-.profile-job-status[data-status="failed"] strong {
-  color: #a33235;
-}
-
 .profile-select {
   position: relative;
   width: min(100%, 320px);
@@ -3386,3 +3350,15 @@ select.inp {
 .analysis-date-fields > .analysis-date-popup { inset: calc(100% + 4px) 0 auto auto !important; }
 
 .patterns-body .pattern-card p { white-space: pre-line; }
+
+.chat-export-fields {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  margin-block: 16px;
+}
+
+.chat-export-scope { position: relative; min-width: 0; }
+.chat-export-scope .ant-select { width: 100%; }
+.chat-export-scope .ant-select-clear { opacity: 1; }

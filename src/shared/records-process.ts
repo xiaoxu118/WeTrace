@@ -12,9 +12,11 @@ export type RecordsCommand =
   | { type: 'chat-index'; id: number; account: WechatAccount; key: string; action: ChatIndexAction; excludedConversationIds?: string[] }
   | { type: 'apply-exclusions'; id: number; account: WechatAccount; key: string }
   | { type: 'profile-evidence'; id: number; account: WechatAccount; key: string; conversationId: string; memberId: string; query: import('./person-profile').ProfilePageQuery }
+  | { type: 'profile-avatars'; id: number; account: WechatAccount; key: string; userIds: string[] }
   | { type: 'group-members'; id: number; account: WechatAccount; key: string; conversationId: string }
   | { type: 'conversation-options'; id: number; account: WechatAccount; key: string; textOnly?: boolean }
   | { type: 'group-monitor'; id: number; account: WechatAccount; key: string; query: import('./group-monitor').MonitorQuery }
+  | { type: 'export'; id: number; account: WechatAccount; key: string; query: import('./chat-export').ChatExportQuery }
   | { type: 'sync'; id: number; account: WechatAccount; key: string }
   | { type: 'report-participants'; id: number; account: WechatAccount; key: string; participants: ReportParticipant[] }
   | { type: 'report-media'; id: number; account: WechatAccount; key: string; conversationId: string; message: SyncMessage }
@@ -28,4 +30,4 @@ export type RecordsCommand =
 export type PreviewData = { id: string; data: Uint8Array; mime: string }
 export type RecordsEvent =
   | { type: 'preview'; preview: PreviewData }
-  | { type: 'result'; id: number; result?: import('./person-profile').ProfileMessagePage | string | import('./group-monitor').MonitorState | import('./types').ConversationOption[] | import('./types').GroupMember[] | ReportParticipant[] | ChatIndexSearchMatch[] | SyncConversation | ChatIndexStatus | NonNullable<SyncMessage['image']> | SyncMessage | ConversationIndexSummary | SpeechStatsResult | SyncResult | ReportMessagesResult | PreviewData | null; error?: string }
+  | { type: 'result'; id: number; result?: import('./person-profile').ProfileMessagePage | import('./person-profile').ProfileAvatar[] | { content: string; count: number } | string | import('./group-monitor').MonitorState | import('./types').ConversationOption[] | import('./types').GroupMember[] | ReportParticipant[] | ChatIndexSearchMatch[] | SyncConversation | ChatIndexStatus | NonNullable<SyncMessage['image']> | SyncMessage | ConversationIndexSummary | SpeechStatsResult | SyncResult | ReportMessagesResult | PreviewData | null; error?: string }

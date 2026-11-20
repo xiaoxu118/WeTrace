@@ -14,17 +14,21 @@ function displayName(value: unknown): string {
   return value.trim()
 }
 
+function observationContent({ detail, references, review }: Omit<ProfileObservation, 'category'>) {
+  return { detail, references, ...(review ? { review } : {}) }
+}
+
 function readProfile(content: string): SavedPersonProfile {
   const record = JSON.parse(content) as SavedPersonProfile | StoredProfile
   if ('sections' in record.profile) {
     const { sections, ...profile } = record.profile
     const observations = profileCategories.flatMap(category =>
-      (sections[category] ?? []).map(({ detail, references }) => ({ detail, references, category })))
+      (sections[category] ?? []).map(item => ({ ...observationContent(item), category })))
     return { ...record, profile: { ...profile, observations } }
   }
-  const observations = record.profile.observations.map(({ category, detail, references }) => ({
-    category: isProfileCategory(category) ? category : '其他' as const,
-    detail, references,
+  const observations = record.profile.observations.map(item => ({
+    category: isProfileCategory(item.category) ? item.category : '其他' as const,
+    ...observationContent(item),
   }))
   return { ...record, profile: { ...record.profile, observations } }
 }
@@ -34,7 +38,7 @@ function serializeProfile(record: SavedPersonProfile): string {
   const sections = Object.fromEntries(profileCategories.map(category => [
     category, observations
       .filter(item => (isProfileCategory(item.category) ? item.category : '其他') === category)
-      .map(({ detail, references }) => ({ detail, references })),
+      .map(observationContent),
   ]))
   return JSON.stringify({ ...record, profile: { ...profile, sections } })
 }
@@ -104,11 +108,10 @@ export class PersonProfileStore {
       const previous = readProfile(String(row.content))
       const name = displayName(input.name.trim() || previous.name)
       const observations = profileCategories.flatMap(category => {
+        const existing = previous.profile.observations.filter(item => item.category === category)
         const detail = input.sections[category].trim()
-        if (!detail) return []
-        const references = [...new Set(previous.profile.observations
-          .filter(item => item.category === category).flatMap(item => item.references))]
-        return [{ category, detail, references }]
+        if (detail === existing.map(item => item.detail).join('\n\n').trim()) return existing
+        return detail ? [{ category, detail, references: [] }] : []
       })
       const record: SavedPersonProfile = {
         ...previous, name, revision: randomUUID(), updatedAt: Date.now(),

@@ -4,7 +4,7 @@ interface ReportModelOptions { onRetry?: (attempt: number, delayMs: number) => v
 class ReportOutputLimitError extends Error {
   readonly partialText: string
   constructor(partialText: string) {
-    super('模型输出达到长度限制，请缩小日期范围或选择简洁风格后重试')
+    super('模型输出达到长度限制，请缩小日期范围后重试')
     this.partialText = partialText
   }
 }

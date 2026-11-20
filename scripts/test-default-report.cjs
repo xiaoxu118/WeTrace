@@ -12,7 +12,7 @@ app.whenReady().then(async () => {
     for (const [source, target] of [['src/shared/report-topics.ts', 'topics.mjs'], ['src/main/report-model.ts', 'model.mjs'], ['src/shared/report-messages.ts', 'messages.mjs'], ['src/shared/report-templates.ts', 'templates.mjs'], ['src/shared/report-styles.ts', 'styles.mjs']]) await fs.writeFile(path.join(directory, target), stripTypeScriptTypes(await fs.readFile(source, 'utf8')))
     await fs.writeFile(path.join(directory, 'facts.mjs'), stripTypeScriptTypes((await fs.readFile('src/shared/report-facts.ts', 'utf8')).replace("'./report-messages.ts'", "'./messages.mjs'")))
     await fs.writeFile(path.join(directory, 'feed.mjs'), stripTypeScriptTypes(await fs.readFile('src/shared/report-feed.ts', 'utf8')))
-    await fs.writeFile(path.join(directory, 'renderer.mjs'), stripTypeScriptTypes((await fs.readFile('src/main/report-renderer.ts', 'utf8')).replace("'./report-model'", "'./model.mjs'").replace("'../shared/report-topics'", "'./topics.mjs'").replace("'../shared/report-feed'", "'./feed.mjs'")))
+    await fs.writeFile(path.join(directory, 'renderer.mjs'), stripTypeScriptTypes((await fs.readFile('src/main/report-renderer.ts', 'utf8')).replace("'./report-model'", "'./model.mjs'").replace("'../shared/report-topics'", "'./topics.mjs'").replace("'../shared/report-feed'", "'./feed.mjs'").replace("'../shared/report-templates'", "'./templates.mjs'")))
     const { reportFacts } = await import(pathToFileURL(path.join(directory, 'facts.mjs')).href)
     const { renderReportHtml } = await import(pathToFileURL(path.join(directory, 'renderer.mjs')).href)
     const { defaultReportTemplates } = await import(pathToFileURL(path.join(directory, 'templates.mjs')).href)

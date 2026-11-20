@@ -65,6 +65,12 @@ try {
   assert.deepEqual(profilePage.rows.map(item => item.anchor.id), ['1'])
   assert.equal(profilePage.snapshot.count, 1)
   assert.equal(index.profileMessagePage('room-b', 'alice').rows.length, 0)
+  const through = profilePage.snapshot.through
+  const lookup = index.profileMessagePage('room-a', 'alice', { through, lookup: { at: profilePage.rows[0].cursor } })
+  assert.deepEqual(lookup.rows.map(item => item.anchor.id), ['1'])
+  const keywords = index.profileMessagePage('room-a', 'alice', { through, lookup: { keyword: 'MESSAGE' } })
+  assert.deepEqual(keywords.rows.map(item => item.anchor.id), ['1'])
+  assert.equal(index.profileMessagePage('room-b', 'alice', { through, lookup: { keyword: 'MESSAGE' } }).rows.length, 0)
   assert.equal(index.status().messages, 3)
   assert.equal(index.status().conversations, 2)
   assert.equal(index.isFresh('v1'), true)
@@ -109,6 +115,49 @@ try {
     after: allHistory.next, through: allHistory.snapshot.through,
   }, 2)
   assert.deepEqual(latest.rows.map(item => item.anchor.id), ['4', '5'])
+  const profileRoom = 'profile-fixture@chatroom'
+  stores.push({ id: 'profile-store', room: profileRoom, tableName: 'Msg_c', dbPath: '/test/c' })
+  const quoteReply = '这次只是在帮朋友准备凤梨活动的游戏道具'
+  const quotedText = '虚构群友：我家已经养了一只猫'
+  const quote = `<msg><appmsg><title>${quoteReply}</title><type>57</type><refermsg><type>1</type><content>${quotedText}</content></refermsg></appmsg></msg>`
+  const profileStart = originalTime + 500 * day / 1000
+  const fixture = (id, seconds, content, sender = 'fixture-person', type = 1) =>
+    ({ ...row(id, sender), createTime: profileStart + seconds, content, type })
+  const profileRows = [
+    fixture(1, 0, '这次凤梨活动结束了'),
+    fixture(2, 2400, quote, 'fixture-person', 57 * 2 ** 32 + 49),
+    fixture(3, 2401, quote.replace('<type>57</type>', '<type>6</type>'), 'fixture-person', 49),
+    ...[4, 5, 6, 7].map(id => fixture(id, 2400 + id, `凤梨道具还有 ${id} 个`)),
+    fixture(8, 2408, '我说自己是这次群聊游戏的凤梨国王是在玩梗'),
+    fixture(9, 2410, '这段确实是游戏对话', 'fixture-friend'),
+  ]
+  messages.set('profile-store', profileRows)
+  version = 'v6'
+  await index.start(source)
+  const profileReader = new ChatIndex(directory, 'account', 'secret', 'me', { readOnly: true })
+  let profileThrough
+  try {
+    const result = profileReader.profileMessagePage(profileRoom, 'fixture-person')
+    profileThrough = result.snapshot.through
+    assert.equal(result.snapshot.count, 7, '只统计本人文字与可解析的引用回复')
+    assert.deepEqual(result.rows.map(item => item.anchor.id), ['1', '2', '4', '5', '6', '7', '8'])
+    assert.equal(result.rows[1].anchor.content, quoteReply)
+    assert.equal(result.rows[1].quotedText, quotedText)
+    assert.equal(result.snapshot.to, (profileStart + 2408) * 1000, '样本日期以本人发言为准')
+    assert.equal(profileThrough[0], (profileStart + 2410) * 1000, '会话读取上界包含其他人的后续回应')
+    assert.deepEqual(result.rows.at(-1).following.map(item => item.message.id), ['9'])
+    const { rows: quoteHits } = profileReader.profileMessagePage(profileRoom, 'fixture-person', { through: profileThrough, lookup: { keyword: '我家已经' } })
+    assert.deepEqual(quoteHits, [], '回复上附的引用不能作为本人关键词命中')
+    const { rows: topicHits } = profileReader.profileMessagePage(profileRoom, 'fixture-person', { through: profileThrough, lookup: { keyword: '凤梨' } })
+    assert.deepEqual(topicHits.slice(0, 2).map(item => item.anchor.id), ['8', '1'], '话题补查优先保留相隔较远的发言')
+  } finally { profileReader.close() }
+  profileRows.push(fixture(10, 2410, '后来插入的同秒发言', 'fixture-friend'))
+  version = 'v7'
+  await index.start(source)
+  const { rows: expanded } = index.profileMessagePage(profileRoom, 'fixture-person', {
+    through: profileThrough, lookup: { at: [(profileStart + 2408) * 1000, 8, 'profile-store'] },
+  })
+  assert.deepEqual(expanded[0].following.map(item => item.message.id), ['9'], '补查使用初始会话游标，同秒的新消息也不混入')
   index.close(); index = undefined
   for (const file of readdirSync(directory)) assert.equal(readFileSync(join(directory, file)).includes(Buffer.from('PRIVATE_MESSAGE_CONTENT')), false)
   console.log('全量聊天索引测试通过：跨会话持久化、增量追加、删除重建、成员统计、重启复用、暂停继续、加密与源变化校验。')

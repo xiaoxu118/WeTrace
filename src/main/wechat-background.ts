@@ -3,14 +3,14 @@ import { getCacheDirectory, getChatIndexDirectory } from './cache-path'
 import type { ReportParticipant } from '../shared/report-facts'
 import type { ChatIndexSearchMatch, ChatIndexAction, ChatIndexStatus } from '../shared/chat-index'
 import { app, utilityProcess, type UtilityProcess } from 'electron'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { cacheImagePreview, readImagePreview } from './image-preview-cache'
 import { excludedConversations, saveExcludedConversations } from './conversation-cache-policy'
 import type { RecordsCommand, RecordsEvent, PreviewData } from '../shared/records-process'
 import type { SyncConversation, ConversationIndexQuery, ConversationIndexSummary, SpeechStatsQuery, SpeechStatsResult, SyncMessage, ReportMessagesFilter, ReportMessagesResult, SyncResult, WechatAccount } from '../shared/types'
 
-type RecordsLane = 'records' | 'statistics' | 'directory' | 'indexing' | 'reports' | 'media'
+type RecordsLane = 'records' | 'statistics' | 'directory' | 'indexing' | 'reports' | 'media' | 'export' | `profile:${string}`
 const processInstances = new Map<RecordsLane, UtilityProcess>()
 let nextId = 0
 const pending = new Map<number, { child: UtilityProcess; resolve: (result: unknown) => void; reject: (error: Error) => void }>()
@@ -23,7 +23,7 @@ const identity = (root: string, key: string): string => createHash('sha256').upd
 function recordsProcess(lane: RecordsLane): UtilityProcess {
   const existing = processInstances.get(lane)
   if (existing) return existing
-  const child = utilityProcess.fork(join(__dirname, 'wechat-records-process.js'), [], { serviceName: lane === 'media' ? 'WeTrace 原图读取' : lane === 'indexing' ? 'WeTrace 聊天索引' : lane === 'reports' ? 'WeTrace 报告读取' : lane === 'directory' ? 'WeTrace 会话目录' : lane === 'statistics' ? 'WeTrace 发言统计' : 'WeTrace 聊天读取' })
+  const child = utilityProcess.fork(join(__dirname, 'wechat-records-process.js'), [], { serviceName: lane === 'media' ? 'WeTrace 原图读取' : lane === 'indexing' ? 'WeTrace 聊天索引' : lane === 'reports' ? 'WeTrace 报告读取' : lane === 'directory' ? 'WeTrace 会话目录' : lane.startsWith('profile:') ? 'WeTrace 画像读取' : lane === 'statistics' ? 'WeTrace 发言统计' : 'WeTrace 聊天读取' })
   processInstances.set(lane, child)
   child.on('message', (event: RecordsEvent) => {
     if (event.type === 'preview') { cacheImagePreview(Buffer.from(event.preview.data), event.preview.mime); return }
@@ -56,7 +56,7 @@ function request<T>(command: Exclude<RecordsCommand, { type: 'init' }> extends i
     const id = ++nextId
     // A native read may stop responding.
     // Expired report requests release their pending entry; late replies are ignored.
-    const timedRecords = lane === 'records' || lane === 'statistics' || lane === 'directory'
+    const timedRecords = lane === 'records' || lane === 'statistics' || lane.startsWith('profile:') || lane === 'directory'
     const timer = lane === 'reports' || lane === 'media' || timedRecords ? setTimeout(() => {
       const error = new Error(lane === 'directory' ? '读取名单超时，请重试' : lane === 'media' ? '读取原图超时，请关闭预览后重试' : lane === 'reports' ? '读取报告记录超时，请重试' : '读取微信记录超时，请重新同步')
       pending.delete(id)
@@ -174,8 +174,26 @@ export function runReportParticipantProfiles(account: WechatAccount, key: string
   return request<ReportParticipant[]>({ type: 'report-participants', account, key, participants })
 }
 
-export function runProfileEvidence(account: WechatAccount, key: string, conversationId: string, memberId: string, query: import('../shared/person-profile').ProfilePageQuery): Promise<import('../shared/person-profile').ProfileMessagePage> {
-  return request({ type: 'profile-evidence', account, key, conversationId, memberId, query }, 'statistics')
+export function createProfileEvidenceReader(account: WechatAccount, key: string, conversationId: string, memberId: string) {
+  const lane = `profile:${randomUUID()}` as const
+  const read = (query: import('../shared/person-profile').ProfilePageQuery): Promise<import('../shared/person-profile').ProfileMessagePage> =>
+    request({ type: 'profile-evidence', account, key, conversationId, memberId, query }, lane)
+  return Object.assign(read, {
+    close() {
+      const child = processInstances.get(lane)
+      if (!child) return
+      processInstances.delete(lane)
+      child.kill()
+    },
+  })
+}
+
+export function runProfileAvatars(account: WechatAccount, key: string, userIds: string[]): Promise<import('../shared/person-profile').ProfileAvatar[]> {
+  return request({ type: 'profile-avatars', account, key, userIds }, 'directory')
+}
+
+export function runChatExport(account: WechatAccount, key: string, query: import('../shared/chat-export').ChatExportQuery): Promise<{ content: string; count: number }> {
+  return request({ type: 'export', account, key, query }, 'export')
 }
 
 export function runGroupMembers(account: WechatAccount, key: string, conversationId: string): Promise<import('../shared/types').GroupMember[]> {

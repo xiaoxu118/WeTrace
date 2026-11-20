@@ -2,6 +2,17 @@ export type PersonProfileTarget =
   | { kind: 'contact'; root: string; contactId: string }
   | { kind: 'group-member'; root: string; groupId: string; memberId: string }
 
+export function personProfileTargetKey(target: PersonProfileTarget): string {
+  return JSON.stringify(target.kind === 'contact'
+    ? [target.root, target.kind, target.contactId]
+    : [target.root, target.kind, target.groupId, target.memberId])
+}
+
+export interface ProfileAvatar {
+  id: string
+  avatar: string
+}
+
 export interface ProfileMessage {
   id: string
   createdAt: number
@@ -17,12 +28,13 @@ export interface ProfileClip {
 
 export type ProfileCursor = [time: number, id: number, source: string]
 export interface ProfilePageQuery {
+  lookup?: { at: ProfileCursor } | { keyword: string }
   after?: ProfileCursor
   through?: ProfileCursor
 }
 
 export interface ProfileMessagePage {
-  clips: (ProfileClip & { serverId?: string })[]
+  clips: (ProfileClip & { serverId?: string; cursor?: ProfileCursor })[]
   next?: ProfileCursor
   snapshot?: { from: number; to: number; count: number; through?: ProfileCursor }
 }
@@ -39,6 +51,7 @@ export interface ProfileObservation {
   category?: ProfileCategory
   detail: string
   references: number[]
+  review?: { confidence: 2 | 3; value: 1 | 2 | 3; reason: string }
 }
 
 export interface PersonProfile {

@@ -1,3 +1,4 @@
+import { commentaryReportTemplateId } from '../shared/report-templates'
 import { parseReportFeed, renderReportFeed } from '../shared/report-feed'
 import { cleanReportText, cleanReportSummary, splitReportTopics, topicParticipants, topicMessageCount, type ReportMessageAuthor } from '../shared/report-topics'
 import type { ReportParticipant } from '../shared/report-facts'
@@ -55,7 +56,7 @@ function renderBody(text: string): string {
 
 export function renderReportHtml(document: ReportDocument): string {
   const { template, name, startDate, endDate, messageCount, counts, content, warnings, width } = document
-  if (template.layout === 'daily' && /^(?:\s*\{|\s*```json)/.test(content)) return renderReportFeed(parseReportFeed(content), document)
+  if (template.layout === 'daily' && /^(?:\s*\{|\s*```json)/.test(content)) return renderReportFeed(parseReportFeed(content), document, template.id === commentaryReportTemplateId)
   const sections: { title: string; lines: string[] }[] = []
   for (const line of content.split('\n')) {
     const heading = /^#{1,2}\s+(.+?)\s*#*\s*$/.exec(line)

@@ -15,7 +15,10 @@ try {
   const profile = {
     from: 1, to: 2,
     evidence: [{ anchor: message, messages: [message] }],
-    observations: [{ detail: '虚构观察', references: [1] }],
+    observations: [
+      { detail: '虚构观察', references: [1], review: { confidence: 3, value: 2, reason: '本人明确自述' } },
+      { detail: '旧版观察', references: [] },
+    ],
   }
   assert.deepEqual(store.list(target.root), [])
   const generated = store.saveGenerated(input, profile)
@@ -30,8 +33,15 @@ try {
   const reopened = new PersonProfileStore(file)
   assert.deepEqual(reopened.list(target.root), [generated])
   assert.deepEqual(reopened.list('second-fixture-account'), [])
-  const patch = {
+  const rename = {
     root: target.root, id: generated.id, revision: generated.revision,
+    name: '新名称', sections: { 基础信息: '', 性格与行为: '', 兴趣爱好: '', 其他: '虚构观察\n\n旧版观察' },
+  }
+  const renamed = reopened.edit(rename)
+  assert.equal(renamed.name, rename.name)
+  assert.deepEqual(renamed.profile, generated.profile)
+  const patch = {
+    ...rename, revision: renamed.revision,
     name: '编辑后的名称', sections: { 基础信息: '', 性格与行为: '', 兴趣爱好: '新兴趣', 其他: '新正文' },
   }
   assert.throws(() => reopened.edit({ ...patch, root: 'second-fixture-account' }), /画像已更新/)
@@ -42,7 +52,7 @@ try {
   assert.equal(edited.name, patch.name)
   assert.deepEqual(edited.profile.observations, [
     { category: '兴趣爱好', detail: '新兴趣', references: [] },
-    { category: '其他', detail: '新正文', references: [1] },
+    { category: '其他', detail: '新正文', references: [] },
   ])
   assert.deepEqual(edited.profile.evidence, profile.evidence)
   const cleared = reopened.edit({
@@ -58,7 +68,9 @@ try {
   const legacy = new DatabaseSync(file)
   try {
     legacy.prepare('UPDATE person_profiles SET content = ?').run(JSON.stringify({
-      ...regenerated, profile: { ...profile, observations: [{ ...profile.observations[0], category: '沟通方式', title: '旧标题' }] },
+      ...regenerated, profile: {
+        ...profile, observations: [{ ...profile.observations[0], category: '沟通方式', title: '旧标题' }, profile.observations[1]],
+      },
     }))
   } finally { legacy.close() }
   assert.deepEqual(reopened.list(target.root), [regenerated])
